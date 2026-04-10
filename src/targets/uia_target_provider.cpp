@@ -75,88 +75,17 @@ QString controlTypeName(int id)
 
 } // namespace
 
-QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
+void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr,
+                                      const QRect& virtualDesktop,
+                                      QVector<UiaSnapshotItem>& out)
 {
-    QVector<UiaSnapshotItem> out;
-    if (!m_automation) return out;
-
-    HWND fg = GetForegroundWindow();
-    if (!fg) return out;
-
-    // skip ourselves and the shell
-    {
-        wchar_t cls[256] = {};
-        GetClassNameW(fg, cls, 256);
-        const QString cn = QString::fromWCharArray(cls);
-        if (cn == QLatin1String("Progman") || cn == QLatin1String("WorkerW")
-            || cn.startsWith(QLatin1String("Qt6"))) {
-            return out;
-        }
-    }
-
-    auto* automation = static_cast<IUIAutomation*>(m_automation);
-
-    IUIAutomationElement* root = nullptr;
-    HRESULT hr = automation->ElementFromHandle(fg, &root);
-    if (FAILED(hr) || !root) return out;
-
-    // build a condition: ControlType IN { button, hyperlink, image, menuitem, listitem }
-    // and IsOffscreen = false
-    auto makeCtypeCond = [&](int id) -> IUIAutomationCondition* {
-        VARIANT v; v.vt = VT_I4; v.lVal = id;
-        IUIAutomationCondition* c = nullptr;
-        automation->CreatePropertyCondition(UIA_ControlTypePropertyId, v, &c);
-        return c;
-    };
-
-    IUIAutomationCondition* ctypes[5] = {
-        makeCtypeCond(UIA_ButtonControlTypeId),
-        makeCtypeCond(UIA_HyperlinkControlTypeId),
-        makeCtypeCond(UIA_ImageControlTypeId),
-        makeCtypeCond(UIA_MenuItemControlTypeId),
-        makeCtypeCond(UIA_ListItemControlTypeId),
-    };
-    // chain CreateOrCondition for the 5 control types we care about.
-    // CreateOrConditionFromArray exists too but it wants a SAFEARRAY
-    // of IUnknowns and life is too short.
-    IUIAutomationCondition* ctypeOr = nullptr;
-    {
-        IUIAutomationCondition* a = nullptr;
-        automation->CreateOrCondition(ctypes[0], ctypes[1], &a);
-        IUIAutomationCondition* b = nullptr;
-        if (a) automation->CreateOrCondition(a, ctypes[2], &b);
-        if (a) a->Release();
-        IUIAutomationCondition* c = nullptr;
-        if (b) automation->CreateOrCondition(b, ctypes[3], &c);
-        if (b) b->Release();
-        if (c) automation->CreateOrCondition(c, ctypes[4], &ctypeOr);
-        if (c) c->Release();
-    }
-    for (int i = 0; i < 5; ++i) if (ctypes[i]) ctypes[i]->Release();
-
-    // off-screen filter
-    VARIANT vFalse; vFalse.vt = VT_BOOL; vFalse.boolVal = VARIANT_FALSE;
-    IUIAutomationCondition* notOffscreen = nullptr;
-    automation->CreatePropertyCondition(UIA_IsOffscreenPropertyId, vFalse, &notOffscreen);
-
-    IUIAutomationCondition* finalCond = nullptr;
-    if (ctypeOr && notOffscreen) {
-        automation->CreateAndCondition(ctypeOr, notOffscreen, &finalCond);
-    }
-    if (ctypeOr) ctypeOr->Release();
-    if (notOffscreen) notOffscreen->Release();
-
-    if (!finalCond) {
-        root->Release();
-        return out;
-    }
+    auto* root      = static_cast<IUIAutomationElement*>(rootPtr);
+    auto* finalCond = static_cast<IUIAutomationCondition*>(condPtr);
+    if (!root || !finalCond) return;
 
     IUIAutomationElementArray* found = nullptr;
-    hr = root->FindAll(TreeScope_Descendants, finalCond, &found);
-    finalCond->Release();
-    root->Release();
-
-    if (FAILED(hr) || !found) return out;
+    HRESULT hr = root->FindAll(TreeScope_Descendants, finalCond, &found);
+    if (FAILED(hr) || !found) return;
 
     int count = 0;
     found->get_Length(&count);
@@ -202,6 +131,97 @@ QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
         el->Release();
     }
     found->Release();
+}
+
+QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
+{
+    QVector<UiaSnapshotItem> out;
+    if (!m_automation) return out;
+
+    auto* automation = static_cast<IUIAutomation*>(m_automation);
+
+    // build the OR-of-control-types AND not-offscreen condition once,
+    // reuse it for both the foreground-window scan and the taskbar scan
+    auto makeCtypeCond = [&](int id) -> IUIAutomationCondition* {
+        VARIANT v; v.vt = VT_I4; v.lVal = id;
+        IUIAutomationCondition* c = nullptr;
+        automation->CreatePropertyCondition(UIA_ControlTypePropertyId, v, &c);
+        return c;
+    };
+
+    IUIAutomationCondition* ctypes[5] = {
+        makeCtypeCond(UIA_ButtonControlTypeId),
+        makeCtypeCond(UIA_HyperlinkControlTypeId),
+        makeCtypeCond(UIA_ImageControlTypeId),
+        makeCtypeCond(UIA_MenuItemControlTypeId),
+        makeCtypeCond(UIA_ListItemControlTypeId),
+    };
+    IUIAutomationCondition* ctypeOr = nullptr;
+    {
+        IUIAutomationCondition* a = nullptr;
+        automation->CreateOrCondition(ctypes[0], ctypes[1], &a);
+        IUIAutomationCondition* b = nullptr;
+        if (a) automation->CreateOrCondition(a, ctypes[2], &b);
+        if (a) a->Release();
+        IUIAutomationCondition* c = nullptr;
+        if (b) automation->CreateOrCondition(b, ctypes[3], &c);
+        if (b) b->Release();
+        if (c) automation->CreateOrCondition(c, ctypes[4], &ctypeOr);
+        if (c) c->Release();
+    }
+    for (int i = 0; i < 5; ++i) if (ctypes[i]) ctypes[i]->Release();
+
+    VARIANT vFalse; vFalse.vt = VT_BOOL; vFalse.boolVal = VARIANT_FALSE;
+    IUIAutomationCondition* notOffscreen = nullptr;
+    automation->CreatePropertyCondition(UIA_IsOffscreenPropertyId, vFalse, &notOffscreen);
+
+    IUIAutomationCondition* finalCond = nullptr;
+    if (ctypeOr && notOffscreen) {
+        automation->CreateAndCondition(ctypeOr, notOffscreen, &finalCond);
+    }
+    if (ctypeOr) ctypeOr->Release();
+    if (notOffscreen) notOffscreen->Release();
+
+    if (!finalCond) return out;
+
+    // pass 1: foreground window
+    HWND fg = GetForegroundWindow();
+    if (fg) {
+        wchar_t cls[256] = {};
+        GetClassNameW(fg, cls, 256);
+        const QString cn = QString::fromWCharArray(cls);
+        const bool isShellOrSelf = (cn == QLatin1String("Progman")
+            || cn == QLatin1String("WorkerW")
+            || cn.startsWith(QLatin1String("Qt6")));
+        if (!isShellOrSelf) {
+            IUIAutomationElement* root = nullptr;
+            if (SUCCEEDED(automation->ElementFromHandle(fg, &root)) && root) {
+                scanFromRoot(root, finalCond, virtualDesktop, out);
+                root->Release();
+            }
+        }
+    }
+
+    // pass 2: taskbar (Shell_TrayWnd) — gets us start menu icons,
+    // pinned apps, the start button itself, the search box, system
+    // tray, etc. spec §8.4 forbids touching system processes / secure
+    // desktop / UAC, but explorer's tray window is regular user shell
+    // and we never modify it (just BitBlt + the §6.2 deviation).
+    HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (tray) {
+        IUIAutomationElement* trayRoot = nullptr;
+        if (SUCCEEDED(automation->ElementFromHandle(tray, &trayRoot)) && trayRoot) {
+            const int beforeCount = out.size();
+            scanFromRoot(trayRoot, finalCond, virtualDesktop, out);
+            const int added = out.size() - beforeCount;
+            if (added > 0) {
+                LOG_DEBUG(QStringLiteral("UIA: scanned taskbar, +%1 targets").arg(added));
+            }
+            trayRoot->Release();
+        }
+    }
+
+    finalCond->Release();
 
     m_lastSnapshot = out;
     return out;

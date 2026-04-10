@@ -47,6 +47,11 @@ public:
     std::optional<HeistTarget> pickRandom(const QRect& virtualDesktop);
 
 private:
+    // private — declared as void* in the header to avoid pulling in
+    // UIAutomation.h. cpp side casts to the real types.
+    void scanFromRoot(void* root, void* cond, const QRect& virtualDesktop,
+                      QVector<UiaSnapshotItem>& out);
+
     bool m_comInitialized = false;
     void* m_automation = nullptr;     // IUIAutomation*, void* to keep this header clean
     QVector<UiaSnapshotItem> m_lastSnapshot;

@@ -67,7 +67,7 @@ he's being a little shit. either way works.
 (this section gets updated each release. things below the line aren't built
 yet but are planned.)
 
-### v0.1 — he exists and he walks ← you are here
+### v0.1 — he exists and he walks
 - transparent click-through overlay covers the whole virtual desktop
 - per-monitor v2 dpi awareness on the process so he doesn't get scaled
   out from under us by windows
@@ -85,7 +85,7 @@ yet but are planned.)
 - logs to %LOCALAPPDATA%\creechr\creechr\creechr.log (rotated at 1MB,
   3 files kept). set CREECHR_LOG_LEVEL=debug if you want the chatty stuff.
 
-### v0.2 — he steals small windows and the cursor ← you are here
+### v0.2 — he steals small windows and the cursor
 - HeistExecutor wired into creechr's main state machine as a sequence
   of states (heist_approach, heist_grab, heist_carry, heist_stash,
   heist_wait, heist_return). all 60s-bounded so a stuck heist can't
@@ -109,7 +109,7 @@ yet but are planned.)
 - quitGracefully always calls Hoard::restoreAll() before exit. if you
   ever lose a window to creechr permanently, that's a bug, file it.
 
-### v0.3 — he steals individual ui controls (best effort) ← you are here
+### v0.3 — he steals individual ui controls (best effort)
 - UiaTargetProvider does CoInitializeEx + CoCreateInstance(CUIAutomation)
   on the main thread (NOT on a worker thread per spec — see below).
   walks the foreground window's UIA descendants every time the
@@ -141,6 +141,82 @@ yet but are planned.)
   off to a corner. the original element is never touched. less dramatic,
   way safer (zero risk of orphaning an occluder window over a user app).
   add the occluder back in v0.4 once the rest of the rough edges are sanded.
+
+### v0.4 — he becomes a real animal ← you are here
+
+everything between v0.3 and v1.0 thats not browser-related. this is
+the version where creechr stops being a sprite-on-rails and starts
+being something with body language.
+
+#### anatomy + animation
+- 48x48 sprite cell (was 32x32). real legs, real arms, a mouth that
+  opens / closes / yawns / bites with visible teeth.
+- 8-frame walk cycle with arm swing, 6-frame climbs, 6-frame grab,
+  6-frame bite, 6-frame carry. idle has a 2-frame breathing bob plus
+  a personality micro-behavior loop (blink / yawn / scratch / mutter)
+  firing every 1.5-3.5 seconds during idle.
+- speech bubbles. small white rounded rect with a tail, drawn above
+  his head, anchored to the sprite. triggered by state transitions:
+  "yoink" when grabbing, "om nom" when gnawing, "OW" / "DICK" when
+  shaken off, "weee" when shooting a rappel line, "hi" / "back off"
+  when the cursor gets close.
+
+#### physics
+- unified 60Hz tick (was 10Hz logic + 30Hz render on separate timers).
+  movement is now visibly continuous instead of hopping in 6-pixel
+  chunks. expensive stuff (EnumWindows, fullscreen check) is rate-
+  limited to 100ms inside the tick.
+- gravity-from-loss-of-support. if the window he was standing on
+  closes, moves significantly, or the user yanks it out from under
+  him, he detects the missing platform and falls into the flung
+  state. when standing on a window thats moved a few pixels he RIDES
+  it instead of dropping (8px tolerance).
+- flung state: real gravity (1500 px/s^2), bounce restitution (0.42),
+  friction on bounce (0.62). bounces off the screen edges. dust puff
+  particles spawn on hard landings.
+- mouse-hover noticing. if the cursor gets within 100 px of him while
+  hes idling or walking, he turns to face it and says something. 5s
+  cooldown so wiggling doesnt spam.
+
+#### gnaw + shake-off
+- new state path: walk -> approach_gnaw -> gnaw. 50% of climb decisions
+  become gnaw decisions. when gnawing, creechr is LATCHED to the
+  windows actual frame each tick — drag the window, drag him with it.
+- shake detection: if the user shakes the window vigorously (4+
+  direction reversals in 800ms with non-trivial magnitude), creechr is
+  flung off with a velocity computed from the shake direction +
+  intensity. he says something rude on the way out.
+
+#### rappel
+- new state path: walk -> shoot_rappel -> rappel_climb -> walk. fires
+  when creechr finds a window whose top is well above his current floor
+  AND whose x-range contains him. ~40% chance to take the rappel path.
+- visible rope: 2px dark line drawn from his hands up to the anchor
+  point, with a small grappling-hook square at the anchor end. drawn
+  UNDER creechr so the rope visually comes out of his hands.
+- rappel down too: 40% chance to rappel from a window-top to the
+  floor instead of climbing the wall.
+
+#### targets
+- taskbar UIA scan. UiaTargetProvider now does TWO scans per pickRandom:
+  the foreground window AND Shell_TrayWnd via FindWindowW. start menu
+  icons / pinned apps / system tray buttons all become UIA heist
+  targets. spec §8.4 cleared because explorer is user shell, not
+  secure desktop, and the §6.2 deviation never modifies anything.
+- per-monitor DPI fix. every win32 physical-rect to qt logical-rect
+  conversion now divides by GetDpiForWindow(hwnd) instead of always
+  the primary screen's devicePixelRatio. mixed-dpi multi-monitor
+  setups are now correct (single-monitor users wont notice).
+
+#### dev knobs
+- `CREECHR_HEIST_NOW=1` — fire heists every ~2 seconds, ignore the
+  random gate and the input-idle gate
+- `CREECHR_GNAW_NOW=1` — every climb decision becomes a gnaw
+- `CREECHR_RAPPEL_NOW=1` — every climb decision becomes a rappel
+- `CREECHR_CHAOS=1` — ~30% of window heists skip the carry-pixmap
+  shrink, restoring the legendary v0.x bug where creechr trundled
+  across the screen with an entire 800px window held aloft. on purpose
+  this time. the user laughed at it and said keep it.
 
 ### v1.0 — he steals stuff out of webpages (with the extension)
 
@@ -237,29 +313,30 @@ opted-in tab and try to eat it.
 
 ## known issues
 
-- multi-monitor with mixed dpi scaling is a war zone. WindowEnumerator
-  divides DWM physical pixels by the PRIMARY screen's devicePixelRatio,
-  which is wrong if your secondary monitor has a different scale. on a
-  single-monitor box it just works. fixing this properly is a v0.2-or
-  -later thing because it'll need per-monitor lookups via MonitorFromWindow.
-- the placeholder sprite is a 32x32 magenta blob with eyes. real art
-  exists in my head. don't @ me.
-- when creechr climbs a window that's positioned at y < 32 (eg. a
-  maximized window), the sprite renders with negative y coords and qt
-  clips it. you'll see his head pop above the screen. fix is to clamp
-  the climb destination to >= 0.
-- idle behaviors (blink, yawn, look around) STILL not implemented as
-  of v0.2. he just stands there during idle. it makes him look
-  constipated. allegedly v0.3.
-- heist orchestrator picks targets at random, no preference for things
-  that look fun. you might watch him steal the same calculator window
-  three times in a row. that's the rng working as designed, sorry.
+- the placeholder sprite is procedurally drawn pink + black with white
+  eyes. real art exists in my head. don't @ me.
+- when creechr climbs onto a maximized window (top y = 0), his sprite
+  ends up at y = -48 (above the screen) and qt clips him. you'll see
+  his head pop above the top of the desktop. fix is to clamp climb
+  destinations to y >= 0 but i havent.
+- shake-off physics tuning is approximate. the velocity numbers in
+  GnawState's shake-detect path were chosen by gut feel and may need
+  adjusting once enough people actually shake windows around with him
+  attached.
 - if a stolen window's process exits while creechr is carrying its
   bitmap to the corner, the restore callback no-ops on a dead hwnd
   and we just drop the entry. visually he'll still walk it to the
   corner and "drop" it, then walk back to nothing. nbd, just looks
   silly.
+- the dom heist coordinate math (extension content script) still uses
+  the page's devicePixelRatio divided by the primary screen dpr. fine
+  on single-monitor 100% boxes, approximate everywhere else. native
+  win32 sources got the per-monitor fix in v0.4 but the extension
+  side still needs the same treatment.
 - right click menus from other apps sometimes draw on top of him. fine.
+- heist orchestrator picks targets at random, no preference for things
+  that look fun. you might watch him steal the same notepad window
+  three times in a row. that's the rng working as designed, sorry.
 
 ## license
 

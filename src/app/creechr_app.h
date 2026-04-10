@@ -8,6 +8,7 @@
 #include <memory>
 
 class TrayIcon;
+class OverlayWindow;
 
 class CreechrApp : public QApplication
 {
@@ -34,5 +35,6 @@ signals:
 
 private:
     std::unique_ptr<TrayIcon> m_tray;
+    std::unique_ptr<OverlayWindow> m_overlay;
     bool m_paused = false;
 };

@@ -29,6 +29,10 @@ add_executable(creechr WIN32
     src/app/creechr_app.cpp
     src/app/tray_icon.h
     src/app/tray_icon.cpp
+    src/render/overlay_window.h
+    src/render/overlay_window.cpp
+    src/util/logging.h
+    src/util/logging.cpp
 )
 
 target_compile_definitions(creechr PRIVATE

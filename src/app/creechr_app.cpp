@@ -1,5 +1,7 @@
 #include "app/creechr_app.h"
 #include "app/tray_icon.h"
+#include "render/overlay_window.h"
+#include "util/logging.h"
 
 #include <QByteArray>
 #include <QTimer>
@@ -19,6 +21,19 @@ CreechrApp::~CreechrApp() = default;
 
 void CreechrApp::start()
 {
+    cr::initLogging();
+    // dev knob: set CREECHR_LOG_LEVEL=debug to get the chatty stuff.
+    // valid values: trace debug info warn error. default is info.
+    const QByteArray lvl = qgetenv("CREECHR_LOG_LEVEL").toLower();
+    if      (lvl == "trace") cr::setLogLevel(cr::LogLevel::Trace);
+    else if (lvl == "debug") cr::setLogLevel(cr::LogLevel::Debug);
+    else if (lvl == "warn")  cr::setLogLevel(cr::LogLevel::Warn);
+    else if (lvl == "error") cr::setLogLevel(cr::LogLevel::Error);
+    LOG_INFO(QStringLiteral("CreechrApp::start"));
+
+    m_overlay = std::make_unique<OverlayWindow>();
+    m_overlay->show();
+
     m_tray = std::make_unique<TrayIcon>(this);
     m_tray->show();
 

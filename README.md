@@ -142,53 +142,98 @@ yet but are planned.)
   way safer (zero risk of orphaning an occluder window over a user app).
   add the occluder back in v0.4 once the rest of the rough edges are sanded.
 
-### v1.0 — he steals stuff out of webpages (with the extension) ← in progress
+### v1.0 — he steals stuff out of webpages (with the extension)
 
-WARNING: v1.0 is **not tagged** yet. the plumbing is in place; the
-runtime forwarding isn't. specifically:
+still **not tagged** because i havent verified the full pipeline against
+a real chrome instance and i dont tag things i havent watched work. but
+the plumbing is wired end-to-end now and structurally complete.
 
-#### what's in the repo
-- `extension/` — manifest v3 chrome / edge extension. vanilla js, no
-  build step. service worker that connects to a native messaging host
-  named `com.creechr.bridge`. content script that walks the dom for
-  `<img>`, `<a href>`, `<button>`, `<li>`, gives each one a stable id,
-  and exposes scan/steal/restore functions. opt-in per tab via popup.
-- `install_extension_host.ps1` — registers the host in HKCU under
-  chrome and edge `NativeMessagingHosts`, pointing at a host json that
-  points at `build/creechr-bridge.exe`. you'll need to edit the
-  `allowed_origins` field with your real extension id after loading
-  the unpacked extension. yes that's annoying. yes it's MV3's fault.
-- `uninstall_extension_host.ps1` — undoes the above.
-- `creechr-bridge.exe` — second cmake target. console binary, pure
-  stdlib (no Qt), reads 4-byte length-prefix json messages on stdin,
-  writes the same on stdout. _binary mode_ on stdin/stdout because text
-  mode would translate CRLF inside the length prefix and corrupt every
-  message. logs every message to bridge.log.
+#### the pipeline
 
-#### what's MISSING for v1.0 to actually work
-- the bridge currently REPLIES with a static `{"type":"ack",...}` to
-  every message instead of forwarding to the always-on creechr.exe.
-- there is no local named pipe (or http loopback, or shared memory,
-  or anything) between the bridge and the main pet. that's the next
-  thing to land. spec §7.1 wants a named pipe; either works.
-- there's no `ExtensionTargetProvider` on the c++ side yet, so even
-  with a working bridge the heist orchestrator wouldn't ask for dom
-  targets. easy add once the pipe exists.
-- the extension's `allowed_origins` host json field has a placeholder
-  extension id (`__YOUR_EXTENSION_ID_HERE__`) that needs hand-editing.
-  unavoidable: chrome generates the id from the extension's public
-  key on first load.
+```
+[chrome extension] ←native messaging→ [creechr-bridge.exe] ←named pipe→ [creechr.exe]
+       content.js              4-byte len + json    \\.\pipe\creechr-extension
+       background.js           on stdin/stdout      newline-delim json
+```
 
-#### what works end-to-end RIGHT NOW
-- you can build creechr.exe + creechr-bridge.exe
-- you can register the host with the powershell script
-- you can load the unpacked extension in chrome dev mode
-- you can opt a tab in via the popup
-- the background script will connect to com.creechr.bridge
-- the bridge will log incoming messages and reply with an ack
-- the dom side (scan, steal, restore) all run inside content.js when
-  asked, but no one's currently asking
-- nothing creechr-side reacts to any of it
+- **chrome extension** in `extension/`. manifest v3, vanilla js, no
+  build step. service worker connects to the native messaging host
+  named `com.creechr.bridge` on demand. content script walks the dom
+  for `<img>`, `<a href>`, `<button>`, `<li>`, gives each one a stable
+  `data-creechr-id`, returns rect + label. on `steal` it removes the
+  element and stashes parent + sibling on `window.__creechrStash`. on
+  `restore` it puts it back exactly. opt-in per tab via popup.
+- **creechr-bridge.exe** is a small pure-stdlib console binary that
+  chrome spawns when the extension calls `connectNative()`. it reads
+  the length-prefix native messaging frames from stdin and forwards
+  them to creechr's named pipe. a worker thread reads the pipe and
+  writes length-prefix frames back to chrome's stdout. _binary mode_
+  on stdio is required — text mode would mangle the length prefix.
+- **creechr.exe** runs an `ExtensionPipeServer` (QLocalServer wrapping
+  a windows named pipe at `\\.\pipe\creechr-extension`, current-user
+  only). last bridge connection wins. on top of that lives an
+  `ExtensionTargetProvider` that auto-scans every 3 seconds while a
+  bridge is connected and caches DOM target snapshots.
+- **heist flow** for `TargetKind::DomElement`: BitBlt the rect for the
+  carried pixmap, send `requestSteal(opaqueId)`, wait for `steal_ack`
+  (with a 4-second hard timeout), then proceed through the same
+  approach → grab → bite → carry → stash → wait → return state machine
+  as window/uia heists. on return: `requestRestore(opaqueId)` from a
+  hoard restore lambda, which the extension routes to the content
+  script's `contentRestore()`.
+
+#### installing it
+
+once, after a clean build of both binaries:
+
+```
+cmake --build build
+.\install_extension_host.ps1
+```
+
+then load the unpacked extension in chrome (`chrome://extensions` →
+developer mode → load unpacked → pick the `extension/` directory).
+chrome will assign the extension a long random id like
+`pgkfajdljekloeoknobcdpfbgmldlbjk`. **copy that id**, then open
+`creechr-bridge-host.json` (the install script wrote it next to the
+ps1) and replace `__YOUR_EXTENSION_ID_HERE__` with `chrome-extension://<that id>/`.
+
+yes this dance is annoying. yes its mv3s fault. there is no way to
+register a native host that accepts an extension whose id you dont
+know yet. production extensions ship a public key in the manifest so
+the id is deterministic — i havent done that for the dev build because
+it would mean either committing a private key or running through a
+key generation step every install. neither is great.
+
+after editing the host json, reload the extension once. then run
+creechr.exe, open a tab, click the creechr popup, click "let him in".
+you should see in `creechr.log`:
+
+```
+ExtensionPipeServer: bridge connected
+ext provider: bridge connected, starting scans
+ext provider: scan_result, N items cached
+```
+
+at which point the orchestrator can roll a dom heist (20% chance per
+attempt) and creechr will pick a random `<img>` or `<a>` from the
+opted-in tab and try to eat it.
+
+#### remaining rough edges
+- the chrome extension id editing dance (above)
+- the content scripts rect math uses `screenX/Y` plus the page's
+  `devicePixelRatio` divided by the OS dpr — right on single-monitor
+  100%-scale boxes, approximate everywhere else
+- if the page reflows between scan and steal, the captured pixmap is
+  what was at that screen position at scan time, which may not be
+  what's there at steal time (creechr will visually carry off whatever
+  was at those coords)
+- only one tab at a time. last opted-in wins.
+- multi-tab tracking would mean the bridge needs to remember which tab
+  context each native-port message came from, which it doesnt
+- closing a tab mid-heist orphans the dom restore. the hoard entry
+  still calls requestRestore on quit but the content script wont be
+  there anymore — the element is just gone. nothing else breaks.
 
 ## known issues
 

@@ -65,6 +65,14 @@ void CreechrApp::start()
 
     m_atlas = std::make_unique<cr::SpriteAtlas>();
     m_atlas->makePlaceholder();
+    // optional sprite override via env. if CREECHR_SPRITE points at a
+    // valid PNG we replace the procedural texture with the loaded one.
+    // animation grid (8 cols × 15 rows of 48px) is still applied — the
+    // user's PNG needs to follow that layout or anims will land wrong.
+    const QByteArray spritePath = qgetenv("CREECHR_SPRITE");
+    if (!spritePath.isEmpty()) {
+        m_atlas->loadFromFile(QString::fromLocal8Bit(spritePath));
+    }
 
     m_hoard = std::make_unique<cr::Hoard>();
     m_hoard->loadFromDisk(); // any orphans get logged + cleared

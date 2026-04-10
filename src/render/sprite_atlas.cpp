@@ -267,7 +267,16 @@ bool SpriteAtlas::loadFromFile(const QString& path)
     }
     // we don't yet have a manifest format, so loadFromFile only loads
     // the texture — animations still need to be defined in code. once
-    // there's real art, ship a json sidecar and parse it here.
+    // there's real art, ship a json sidecar and parse it here. for now
+    // the loaded image MUST match the procedural grid layout: 8 cols
+    // × 15 rows of 48×48 cells, total 384×720 pixels.
+    if (pm.width() != 8 * kCellW || pm.height() != 15 * kCellH) {
+        LOG_WARN(QStringLiteral("sprite_atlas: %1 is %2x%3 but the grid layout "
+                                "requires %4x%5 (8 cols x 15 rows of %6 px). "
+                                "loading anyway, animations may break.")
+            .arg(path).arg(pm.width()).arg(pm.height())
+            .arg(8 * kCellW).arg(15 * kCellH).arg(kCellW));
+    }
     m_pixmap = pm;
     LOG_INFO(QStringLiteral("sprite_atlas: loaded %1 (%2x%3)")
         .arg(path).arg(pm.width()).arg(pm.height()));

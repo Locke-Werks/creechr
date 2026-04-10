@@ -62,6 +62,22 @@ bool isCloaked(HWND hwnd)
     return SUCCEEDED(hr) && cloaked != 0;
 }
 
+// returns the dpi scale (1.0, 1.25, 1.5, 2.0, ...) for the monitor a
+// given window lives on. uses GetDpiForWindow which is win10 1607+
+// — older versions get a 1.0 fallback which is wrong but doesnt crash.
+qreal dpiScaleForWindow(HWND hwnd)
+{
+    if (!hwnd) return 1.0;
+    // GetDpiForWindow is in user32 already linked. returns DPI per inch
+    // (96 = 100%, 144 = 150%, 192 = 200%). zero on failure.
+    UINT dpi = GetDpiForWindow(hwnd);
+    if (dpi == 0) {
+        QScreen* primary = QGuiApplication::primaryScreen();
+        return primary ? primary->devicePixelRatio() : 1.0;
+    }
+    return dpi / 96.0;
+}
+
 QRect dwmFrameRect(HWND hwnd)
 {
     // GetWindowRect lies on win10+ — it includes the invisible 8ish-pixel
@@ -69,11 +85,9 @@ QRect dwmFrameRect(HWND hwnd)
     // gives you the actual visible frame. use it. always. forever.
     //
     // BOTH apis return PHYSICAL pixels regardless of dpi awareness. qt's
-    // QScreen::geometry() returns LOGICAL pixels. so we have to divide by
-    // the primary screen's devicePixelRatio to get back to a coordinate
-    // system creechr can reason about. on multi-monitor mixed-dpi setups
-    // this is wrong (each monitor needs its own divisor) — that's a v0.2
-    // problem. on a single-monitor box it just works.
+    // QScreen::geometry() returns LOGICAL pixels. divisor is THIS window's
+    // monitor dpi (not the primary screen's), so mixed-dpi multi-monitor
+    // setups are now correct.
     RECT r = {};
     HRESULT hr = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r));
     if (FAILED(hr)) {
@@ -83,8 +97,7 @@ QRect dwmFrameRect(HWND hwnd)
         }
         LOG_DEBUG(QStringLiteral("dwm extended frame failed for hwnd, using GetWindowRect"));
     }
-    QScreen* primary = QGuiApplication::primaryScreen();
-    const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+    const qreal dpr = dpiScaleForWindow(hwnd);
     if (dpr <= 0.0) {
         return QRect(QPoint(r.left, r.top), QPoint(r.right - 1, r.bottom - 1));
     }

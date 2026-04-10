@@ -48,8 +48,10 @@ public:
 
 private:
     // private — declared as void* in the header to avoid pulling in
-    // UIAutomation.h. cpp side casts to the real types.
-    void scanFromRoot(void* root, void* cond, const QRect& virtualDesktop,
+    // UIAutomation.h. cpp side casts to the real types. sourceHwnd is
+    // the hwnd the root element came from, used for per-monitor dpi.
+    void scanFromRoot(void* root, void* cond, void* sourceHwnd,
+                      const QRect& virtualDesktop,
                       QVector<UiaSnapshotItem>& out);
 
     bool m_comInitialized = false;

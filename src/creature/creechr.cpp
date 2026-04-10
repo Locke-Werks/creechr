@@ -447,9 +447,13 @@ QRect currentDwmFrame(HWND hwnd)
     RECT r{};
     HRESULT hr = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r));
     if (FAILED(hr) && !GetWindowRect(hwnd, &r)) return {};
-    QScreen* primary = QGuiApplication::primaryScreen();
-    qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
-    if (dpr <= 0.0) dpr = 1.0;
+    // per-monitor dpi using GetDpiForWindow so mixed-dpi setups work.
+    UINT dpi = GetDpiForWindow(hwnd);
+    if (dpi == 0) {
+        QScreen* primary = QGuiApplication::primaryScreen();
+        dpi = primary ? static_cast<UINT>(primary->devicePixelRatio() * 96.0) : 96;
+    }
+    const qreal dpr = dpi / 96.0;
     return QRect(
         QPoint(static_cast<int>(r.left  / dpr), static_cast<int>(r.top    / dpr)),
         QPoint(static_cast<int>(r.right / dpr - 1), static_cast<int>(r.bottom / dpr - 1))

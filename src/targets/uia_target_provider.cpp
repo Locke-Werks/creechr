@@ -75,12 +75,13 @@ QString controlTypeName(int id)
 
 } // namespace
 
-void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr,
+void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr, void* sourceHwndPtr,
                                       const QRect& virtualDesktop,
                                       QVector<UiaSnapshotItem>& out)
 {
     auto* root      = static_cast<IUIAutomationElement*>(rootPtr);
     auto* finalCond = static_cast<IUIAutomationCondition*>(condPtr);
+    HWND sourceHwnd = static_cast<HWND>(sourceHwndPtr);
     if (!root || !finalCond) return;
 
     IUIAutomationElementArray* found = nullptr;
@@ -90,8 +91,17 @@ void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr,
     int count = 0;
     found->get_Length(&count);
 
-    QScreen* primary = QGuiApplication::primaryScreen();
-    const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+    // per-monitor dpi for the source window. if GetDpiForWindow fails
+    // or theres no source hwnd, fall back to the primary screen.
+    qreal dpr = 1.0;
+    if (sourceHwnd) {
+        UINT dpi = GetDpiForWindow(sourceHwnd);
+        if (dpi > 0) dpr = dpi / 96.0;
+    }
+    if (dpr <= 0.0) {
+        QScreen* primary = QGuiApplication::primaryScreen();
+        dpr = primary ? primary->devicePixelRatio() : 1.0;
+    }
 
     for (int i = 0; i < count && i < 256; ++i) {
         IUIAutomationElement* el = nullptr;
@@ -196,7 +206,7 @@ QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
         if (!isShellOrSelf) {
             IUIAutomationElement* root = nullptr;
             if (SUCCEEDED(automation->ElementFromHandle(fg, &root)) && root) {
-                scanFromRoot(root, finalCond, virtualDesktop, out);
+                scanFromRoot(root, finalCond, fg, virtualDesktop, out);
                 root->Release();
             }
         }
@@ -212,7 +222,7 @@ QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
         IUIAutomationElement* trayRoot = nullptr;
         if (SUCCEEDED(automation->ElementFromHandle(tray, &trayRoot)) && trayRoot) {
             const int beforeCount = out.size();
-            scanFromRoot(trayRoot, finalCond, virtualDesktop, out);
+            scanFromRoot(trayRoot, finalCond, tray, virtualDesktop, out);
             const int added = out.size() - beforeCount;
             if (added > 0) {
                 LOG_DEBUG(QStringLiteral("UIA: scanned taskbar, +%1 targets").arg(added));

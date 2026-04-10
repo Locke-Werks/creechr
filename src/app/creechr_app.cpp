@@ -182,7 +182,21 @@ void CreechrApp::onTick()
             db = db.united(s->geometry());
         }
         g_cachedWorld.virtualDesktop = db;
-        if (m_windows)    g_cachedWorld.windowRects     = m_windows->snapshotRects();
+        if (m_windows) {
+            // single snapshot call, then split into parallel rect+hwnd
+            // vectors. the gnaw state needs hwnds so it can talk to
+            // dwm directly each tick (10Hz cache is too coarse for
+            // smooth window-following).
+            const auto full = m_windows->snapshot();
+            g_cachedWorld.windowRects.clear();
+            g_cachedWorld.windowHwnds.clear();
+            g_cachedWorld.windowRects.reserve(full.size());
+            g_cachedWorld.windowHwnds.reserve(full.size());
+            for (const auto& wi : full) {
+                g_cachedWorld.windowRects.push_back(wi.frame);
+                g_cachedWorld.windowHwnds.push_back(reinterpret_cast<void*>(wi.hwnd));
+            }
+        }
         if (m_fullscreen) g_cachedWorld.fullscreenActive = m_fullscreen->isFullscreenActive();
     }
     // cheap stuff every tick

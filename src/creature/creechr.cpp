@@ -9,13 +9,16 @@
 
 #include <QCursor>
 #include <QDateTime>
+#include <QGuiApplication>
 #include <QRandomGenerator>
 #include <QRect>
+#include <QScreen>
 #include <QtGlobal>
 #include <memory>
 
 #ifdef _WIN32
 #  include <windows.h>
+#  include <dwmapi.h>
 #endif
 
 namespace cr {
@@ -157,12 +160,29 @@ public:
                 const int idx = QRandomGenerator::global()->bounded(world.windowRects.size());
                 const QRect& w = world.windowRects[idx];
                 if (w.height() >= 64 && w.width() >= 64) {
-                    // pick edge: 60% chance the FARTHER edge so he
-                    // actually traverses the screen, 40% nearer.
-                    // (v0.1 always picked nearer, which meant he camped
-                    // on the left edge of the maximized window forever.)
                     const int leftDist  = qAbs(static_cast<int>(pos.x()) - w.left());
                     const int rightDist = qAbs(static_cast<int>(pos.x()) - w.right());
+                    // 50% chance: gnaw on the nearer edge instead of
+                    // climbing. gnaw doesn't steal anything — just chew
+                    // on the window for a few seconds. user can shake
+                    // creechr off by dragging the window vigorously.
+                    // override: CREECHR_GNAW_NOW=1 forces every attempt
+                    // to be a gnaw, for "show me it works" runs.
+                    static const bool kForceGnaw = !qgetenv("CREECHR_GNAW_NOW").isEmpty();
+                    const bool wantGnaw = kForceGnaw
+                        || QRandomGenerator::global()->bounded(10) < 5;
+                    if (wantGnaw) {
+                        const int targetX = (leftDist <= rightDist)
+                            ? w.left() : (w.right() - kSpriteWidth);
+                        void* hwnd = (idx < world.windowHwnds.size())
+                            ? world.windowHwnds[idx] : nullptr;
+                        c.setGnawTarget(targetX, hwnd);
+                        LOG_DEBUG(QStringLiteral("walk: gnaw target window %1 (%2x%3) at x=%4")
+                            .arg(idx).arg(w.width()).arg(w.height()).arg(targetX));
+                        return QStringLiteral("approach_gnaw");
+                    }
+                    // pick edge: 60% chance the FARTHER edge so he
+                    // actually traverses the screen, 40% nearer.
                     const bool preferFar = QRandomGenerator::global()->bounded(10) < 6;
                     const bool useLeft = preferFar
                         ? (leftDist >  rightDist)
@@ -264,6 +284,28 @@ public:
     }
 };
 
+// helper used by GnawState — get a window's current frame in qt logical
+// pixels, accounting for the dwm shadow lie and primary-screen dpr.
+// returns an empty rect if the window is gone.
+namespace {
+#ifdef _WIN32
+QRect currentDwmFrame(HWND hwnd)
+{
+    if (!hwnd || !IsWindow(hwnd)) return {};
+    RECT r{};
+    HRESULT hr = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r));
+    if (FAILED(hr) && !GetWindowRect(hwnd, &r)) return {};
+    QScreen* primary = QGuiApplication::primaryScreen();
+    qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+    if (dpr <= 0.0) dpr = 1.0;
+    return QRect(
+        QPoint(static_cast<int>(r.left  / dpr), static_cast<int>(r.top    / dpr)),
+        QPoint(static_cast<int>(r.right / dpr - 1), static_cast<int>(r.bottom / dpr - 1))
+    );
+}
+#endif
+} // namespace
+
 // move down at constant speed until we hit climbTargetY (the floor).
 class ClimbDownState : public State
 {
@@ -290,6 +332,247 @@ public:
         c.setPosition(pos);
         return {};
     }
+};
+
+// === gnaw / flung states ===
+//
+// gnaw: creechr walks up to a window edge and chews on it for a while
+// without stealing anything. while gnawing he's "attached" — every tick
+// his position snaps to the window's current top-left + the offset he
+// had when he latched on. so dragging the window drags him too. shake
+// the window fast enough and he gets flung off.
+//
+// flung: physics. gravity, bounce off the floor, friction, eventually
+// settles back to walking. used by the shake-off mechanic and (TODO)
+// any other "creechr is suddenly in space" path.
+
+namespace gnaw_constants {
+constexpr int  kGnawDurationMs       = 6000;     // bite on the window for 6s
+constexpr int  kShakeWindowMs        = 800;      // sliding window for shake detection
+constexpr int  kShakeMinSignChanges  = 4;        // need this many flips in kShakeWindowMs
+constexpr int  kShakeMinVel          = 6;        // px/tick to count as a "real" move
+constexpr double kGravityPxPerSec2   = 1500.0;
+constexpr double kBounceRestitution  = 0.42;
+constexpr double kBounceFriction     = 0.62;
+constexpr int  kSettledFramesMin     = 30;
+} // namespace gnaw_constants
+
+class ApproachGnawState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("approach_gnaw"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        m_giveUpMs = 0;
+        const int targetX = c.gnawTargetX();
+        const bool right = targetX > c.position().x();
+        c.setFacingRight(right);
+        c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
+        c.animator().setAnimation(right ? QStringLiteral("walk_right")
+                                        : QStringLiteral("walk_left"));
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext& /*world*/) override
+    {
+        m_giveUpMs += deltaMs;
+        // gnaw is low-stakes and doesnt steal anything, so unlike heist
+        // states it does NOT abort on user input. only timeout aborts.
+        if (m_giveUpMs > 8000) {
+            c.clearGnawTarget();
+            return QStringLiteral("walk");
+        }
+        QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
+        c.setPosition(pos);
+        if (qAbs(static_cast<int>(pos.x()) - c.gnawTargetX()) <= 4) {
+            c.setPosition({ static_cast<qreal>(c.gnawTargetX()), pos.y() });
+            return QStringLiteral("gnaw");
+        }
+        return {};
+    }
+
+private:
+    int m_giveUpMs = 0;
+};
+
+class GnawState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("gnaw"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, 0 });
+        c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+        m_durationMs = 0;
+        m_signChanges = 0;
+        m_shakeWindowMs = 0;
+        m_lastVxSign = 0;
+        m_lastWindowTopLeft = QPoint();
+        m_attachOffset = QPoint();
+        m_initialized = false;
+
+#ifdef _WIN32
+        HWND hwnd = static_cast<HWND>(c.gnawHwnd());
+        if (!hwnd || !IsWindow(hwnd)) {
+            // window died between approach and gnaw — fall instead
+            m_initialized = false;
+            return;
+        }
+        const QRect frame = currentDwmFrame(hwnd);
+        if (frame.isEmpty()) return;
+        m_lastWindowTopLeft = frame.topLeft();
+        m_attachOffset = QPoint(static_cast<int>(c.position().x()) - frame.left(),
+                                static_cast<int>(c.position().y()) - frame.top());
+        m_initialized = true;
+        LOG_INFO(QStringLiteral("gnaw: latched onto window at (%1,%2) offset (%3,%4)")
+            .arg(frame.left()).arg(frame.top())
+            .arg(m_attachOffset.x()).arg(m_attachOffset.y()));
+#endif
+    }
+
+    void exit(Creechr& c, const WorldContext&) override
+    {
+        c.clearGnawTarget();
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    {
+#ifdef _WIN32
+        HWND hwnd = static_cast<HWND>(c.gnawHwnd());
+        if (!m_initialized || !hwnd || !IsWindow(hwnd)) {
+            // window vanished — drop into the void
+            c.setVelocity({ 0, 80 });
+            return QStringLiteral("flung");
+        }
+        const QRect frame = currentDwmFrame(hwnd);
+        if (frame.isEmpty()) {
+            c.setVelocity({ 0, 80 });
+            return QStringLiteral("flung");
+        }
+
+        // shake detection: track sign of x velocity per tick. count flips
+        // in a sliding ~800ms window. if there have been kShakeMinSignChanges
+        // direction reversals with non-trivial magnitude, fling.
+        const int dx = frame.left() - m_lastWindowTopLeft.x();
+        const int dy = frame.top()  - m_lastWindowTopLeft.y();
+        m_lastWindowTopLeft = frame.topLeft();
+
+        const int curSign = (qAbs(dx) >= gnaw_constants::kShakeMinVel)
+            ? (dx > 0 ? 1 : -1)
+            : 0;
+        if (curSign != 0 && m_lastVxSign != 0 && curSign != m_lastVxSign) {
+            m_signChanges++;
+        }
+        if (curSign != 0) m_lastVxSign = curSign;
+
+        m_shakeWindowMs += deltaMs;
+        if (m_shakeWindowMs > gnaw_constants::kShakeWindowMs) {
+            m_shakeWindowMs = 0;
+            m_signChanges = 0;
+        }
+        if (m_signChanges >= gnaw_constants::kShakeMinSignChanges) {
+            // flung. give him velocity in the current shake direction
+            // plus an upward kick proportional to the shake intensity.
+            const double impulseX = dx * 18.0;
+            const double impulseY = -260.0 - qAbs(dy) * 6.0;
+            c.setVelocity({ impulseX, impulseY });
+            LOG_INFO(QStringLiteral("gnaw: SHAKEN OFF, fling vel (%1, %2)")
+                .arg(impulseX).arg(impulseY));
+            return QStringLiteral("flung");
+        }
+
+        // follow the window
+        c.setPosition({ static_cast<qreal>(frame.left() + m_attachOffset.x()),
+                        static_cast<qreal>(frame.top()  + m_attachOffset.y()) });
+
+        m_durationMs += deltaMs;
+        if (m_durationMs >= gnaw_constants::kGnawDurationMs) {
+            // done gnawing, walk away
+            c.setFloorY(static_cast<int>(c.position().y()));
+            return QStringLiteral("walk");
+        }
+#else
+        Q_UNUSED(deltaMs);
+        return QStringLiteral("walk");
+#endif
+        return {};
+    }
+
+private:
+    bool m_initialized = false;
+    QPoint m_attachOffset;
+    QPoint m_lastWindowTopLeft;
+    int m_durationMs = 0;
+    int m_signChanges = 0;
+    int m_shakeWindowMs = 0;
+    int m_lastVxSign = 0;
+};
+
+class FlungState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("flung"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        // velocity was set by whoever flung him. set animation to hang
+        // (arms up) which reads as flailing.
+        c.animator().setAnimation(QStringLiteral("hang"));
+        m_settledFrames = 0;
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
+    {
+        const double dt = deltaMs / 1000.0;
+        QPointF vel = c.velocity();
+        QPointF pos = c.position();
+
+        vel.setY(vel.y() + gnaw_constants::kGravityPxPerSec2 * dt);
+        pos += vel * dt;
+
+        const int floorY = world.virtualDesktop.bottom() - kSpriteHeight;
+        const int leftEdge  = world.virtualDesktop.left();
+        const int rightEdge = world.virtualDesktop.right() - kSpriteWidth;
+
+        // floor bounce
+        if (pos.y() >= floorY) {
+            pos.setY(floorY);
+            if (vel.y() > 0) {
+                vel.setY(-vel.y() * gnaw_constants::kBounceRestitution);
+                vel.setX( vel.x() * gnaw_constants::kBounceFriction);
+            }
+        }
+        // wall bounce (less interesting but stops him going off screen)
+        if (pos.x() < leftEdge) {
+            pos.setX(leftEdge);
+            vel.setX(-vel.x() * gnaw_constants::kBounceRestitution);
+        } else if (pos.x() > rightEdge) {
+            pos.setX(rightEdge);
+            vel.setX(-vel.x() * gnaw_constants::kBounceRestitution);
+        }
+
+        c.setPosition(pos);
+        c.setVelocity(vel);
+
+        const bool onFloor = (pos.y() >= floorY - 1);
+        const bool slow = (qAbs(vel.x()) < 30.0 && qAbs(vel.y()) < 50.0);
+        if (onFloor && slow) {
+            m_settledFrames++;
+            if (m_settledFrames >= gnaw_constants::kSettledFramesMin) {
+                // recompose
+                c.setVelocity({ 0, 0 });
+                c.setFloorY(floorY);
+                return QStringLiteral("idle");
+            }
+        } else {
+            m_settledFrames = 0;
+        }
+        return {};
+    }
+
+private:
+    int m_settledFrames = 0;
 };
 
 // === heist states ===
@@ -733,8 +1016,13 @@ public:
         c.animator().setAnimation(QStringLiteral("sleep"));
     }
 
-    QString tick(int /*deltaMs*/, Creechr& /*c*/, const WorldContext& world) override
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
     {
+        // pending heist wakes him up too — orchestrator can queue a
+        // heist while creechr is napping and we want him to act on it.
+        if (c.heist() && !c.heist()->grabbed) {
+            return QStringLiteral("wake");
+        }
         // any cursor activity wakes him up. the threshold is "input
         // happened in the last second", which is forgiving enough that
         // a single mouse twitch counts.
@@ -777,6 +1065,9 @@ Creechr::Creechr(const SpriteAtlas& atlas)
     m_states.registerState(std::make_unique<ApproachWallState>());
     m_states.registerState(std::make_unique<ClimbUpState>());
     m_states.registerState(std::make_unique<ClimbDownState>());
+    m_states.registerState(std::make_unique<ApproachGnawState>());
+    m_states.registerState(std::make_unique<GnawState>());
+    m_states.registerState(std::make_unique<FlungState>());
     m_states.registerState(std::make_unique<SleepState>());
     m_states.registerState(std::make_unique<WakeState>());
     m_states.registerState(std::make_unique<HeistApproachState>());

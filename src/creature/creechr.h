@@ -84,6 +84,13 @@ public:
     void setClimbTarget(int x, int y) { m_climbTargetX = x; m_climbTargetY = y; }
     void clearClimbTarget() { m_climbTargetX = -1; m_climbTargetY = -1; }
 
+    // gnaw target: a window we want to walk over and chew on. void* not
+    // CrHwnd because the header isnt allowed to include windows.h.
+    int gnawTargetX() const { return m_gnawTargetX; }
+    void* gnawHwnd() const { return m_gnawHwnd; }
+    void setGnawTarget(int x, void* hwnd) { m_gnawTargetX = x; m_gnawHwnd = hwnd; }
+    void clearGnawTarget() { m_gnawTargetX = -1; m_gnawHwnd = nullptr; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -113,6 +120,8 @@ private:
     int m_floorY = 0;
     int m_climbTargetX = -1;
     int m_climbTargetY = -1;
+    int m_gnawTargetX = -1;
+    void* m_gnawHwnd = nullptr;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

@@ -21,8 +21,12 @@ struct WorldContext {
     QPoint cursorPos;
     int msSinceLastInput = 0;
 
-    // populated by WindowEnumerator in a later commit. empty here.
-    QVector<QRect> windowRects;
+    // populated by WindowEnumerator. parallel vectors — windowRects[i]
+    // and windowHwnds[i] describe the same window. hwnd is void* here
+    // so this header doesnt have to drag in windows.h; the consumer
+    // (heist + gnaw states in creechr.cpp) reinterpret_casts to HWND.
+    QVector<QRect>  windowRects;
+    QVector<void*>  windowHwnds;
 
     // is the user in a fullscreen game / presentation? if true the
     // overlay should hide and the creature should just freeze.

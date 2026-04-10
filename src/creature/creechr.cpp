@@ -75,8 +75,13 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
-        // platform check first — if the window he was standing on
-        // closed or moved out from under him, fall.
+        // flee from scary admin window — caller already set velocity
+        if (c.wantsFlee()) {
+            c.consumeFlee();
+            return QStringLiteral("flung");
+        }
+        // platform check — if the window he was standing on closed
+        // or moved out from under him, fall.
         int rideY = 0;
         if (!hasPlatformUnder(c, world, &rideY)) {
             c.setVelocity({ 0, 0 });
@@ -240,6 +245,11 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
+        // flee from scary admin window — caller already set velocity
+        if (c.wantsFlee()) {
+            c.consumeFlee();
+            return QStringLiteral("flung");
+        }
         // platform check first. if the window he was walking on closed
         // or moved out from under him, drop into flung. if it moved a
         // few pixels, RIDE it.

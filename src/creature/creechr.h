@@ -168,6 +168,14 @@ public:
     void beginHeist(HeistTarget t);
     void clearHeist();
 
+    // wantsFlee: set externally (by CreechrApp's scary-admin detector)
+    // when creechr should drop whatever he's doing and run away. read
+    // by Idle/Walk states at the top of tick(). they pre-set velocity
+    // before flipping the flag.
+    bool wantsFlee() const { return m_wantsFlee; }
+    void requestFlee() { m_wantsFlee = true; }
+    void consumeFlee() { m_wantsFlee = false; }
+
 private:
     QPointF m_position { 100.0, 600.0 };
     QPointF m_velocity { 0.0,   0.0   };
@@ -187,6 +195,7 @@ private:
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;
     std::optional<HeistContext> m_heist;
+    bool m_wantsFlee = false;
 
     Animator m_animator;
     StateMachine m_states;

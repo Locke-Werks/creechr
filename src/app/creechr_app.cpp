@@ -20,6 +20,10 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#ifdef _WIN32
+#  include <psapi.h>
+#endif
+
 namespace {
 // cached world snapshot, refreshed at ~10Hz inside onTick. defined here
 // at the top of the file so the tray-menu helper functions can also
@@ -29,6 +33,76 @@ cr::WorldContext g_cachedWorld;
 // compute the windowDeltas field each refresh. cleared when an hwnd
 // drops out of the snapshot (window closed).
 QHash<void*, QPoint> g_prevWindowPositions;
+
+#ifdef _WIN32
+// is this hwnd one of the windows creechr should be afraid of?
+// covers elevated terminals (window title starts with "Administrator:"),
+// known scary processes (taskmgr / regedit / mmc / msconfig / etc), and
+// the credential-dialog xaml host class. consent.exe + the actual UAC
+// secure-desktop window are NOT detectable from this process because
+// they live on a separate desktop — those will scare him only by
+// proximity to whatever launched them.
+bool isScaryWindow(HWND hwnd, QString* whyOut)
+{
+    if (!hwnd) return false;
+
+    wchar_t cls[256] = {};
+    GetClassNameW(hwnd, cls, 256);
+    const QString className = QString::fromWCharArray(cls);
+    if (className == QLatin1String("$$$Secure UI App Wnd")
+        || className == QLatin1String("Credential Dialog Xaml Host")
+        || className.startsWith(QLatin1String("UAC"))) {
+        if (whyOut) *whyOut = QStringLiteral("secure dialog");
+        return true;
+    }
+
+    wchar_t title[256] = {};
+    GetWindowTextW(hwnd, title, 256);
+    const QString titleStr = QString::fromWCharArray(title);
+    if (titleStr.startsWith(QLatin1String("Administrator:"))) {
+        if (whyOut) *whyOut = QStringLiteral("elevated terminal");
+        return true;
+    }
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0) return false;
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return false;
+    wchar_t path[MAX_PATH] = {};
+    DWORD sz = MAX_PATH;
+    bool isScary = false;
+    if (QueryFullProcessImageNameW(h, 0, path, &sz)) {
+        QString p = QString::fromWCharArray(path).toLower();
+        const int slash = p.lastIndexOf('\\');
+        const QString name = (slash >= 0) ? p.mid(slash + 1) : p;
+        // these are the windows where creechr should not be poking
+        // around. taskmgr / regedit / mmc / etc are user-shell visible
+        // and "look administrative". consent.exe normally hides on the
+        // secure desktop but check for it anyway in case its visible.
+        static const QStringList kScaryNames = {
+            QStringLiteral("taskmgr.exe"),
+            QStringLiteral("regedit.exe"),
+            QStringLiteral("mmc.exe"),
+            QStringLiteral("msconfig.exe"),
+            QStringLiteral("services.exe"),
+            QStringLiteral("certmgr.exe"),
+            QStringLiteral("perfmon.exe"),
+            QStringLiteral("eventvwr.exe"),
+            QStringLiteral("compmgmt.exe"),
+            QStringLiteral("consent.exe"),
+            QStringLiteral("logonui.exe"),
+            QStringLiteral("winlogon.exe"),
+        };
+        if (kScaryNames.contains(name)) {
+            if (whyOut) *whyOut = name;
+            isScary = true;
+        }
+    }
+    CloseHandle(h);
+    return isScary;
+}
+#endif
 } // namespace
 
 #include <QByteArray>
@@ -341,6 +415,50 @@ void CreechrApp::onTick()
             LOG_INFO(QStringLiteral("orchestrator: %1 attempt found no target").arg(whichRoll));
         }
     }
+
+    // SCARY ADMIN DETECTION: scan visible windows for things that
+    // smell administrative (taskmgr, regedit, mmc, elevated terminals,
+    // credential dialogs). if a scary one is within 350 px of creechr,
+    // he flees — high horizontal velocity in the opposite direction
+    // plus an upward kick. flee state is requested via Creechr::
+    // requestFlee() which Idle/Walk pick up at the top of their tick
+    // and convert to a transition into FlungState.
+#ifdef _WIN32
+    if (m_creechr && (now - m_lastScareMs) > 6000) {
+        const QString stateName = m_creechr->stateMachine().currentName();
+        const bool fleeable = (stateName == QLatin1String("idle")
+                             || stateName == QLatin1String("walk"));
+        if (fleeable) {
+            for (int i = 0; i < g_cachedWorld.windowHwnds.size(); ++i) {
+                HWND hwnd = static_cast<HWND>(g_cachedWorld.windowHwnds[i]);
+                QString why;
+                if (!isScaryWindow(hwnd, &why)) continue;
+                const QRect& r = g_cachedWorld.windowRects[i];
+                const int dx = r.center().x() - static_cast<int>(m_creechr->position().x());
+                if (qAbs(dx) > 350) continue;
+                m_lastScareMs = now;
+                LOG_INFO(QStringLiteral("scared by '%1' (%2 px away)").arg(why).arg(dx));
+                m_creechr->speakRandom({
+                    QStringLiteral("NO"),
+                    QStringLiteral("EVIL"),
+                    QStringLiteral("scary"),
+                    QStringLiteral("RUN"),
+                    QStringLiteral("ABORT"),
+                    QStringLiteral("DANGER"),
+                    QStringLiteral("uh oh"),
+                    QStringLiteral("not that one"),
+                    QStringLiteral("not the registry"),
+                }, 2200);
+                // flee opposite to the scary thing
+                const double fleeVx = (dx > 0) ? -340.0 : 340.0;
+                m_creechr->setVelocity({ fleeVx, -260.0 });
+                m_creechr->setFacingRight(dx <= 0);
+                m_creechr->requestFlee();
+                break;
+            }
+        }
+    }
+#endif
 
     // window-drag noticing: when the user drags a window quickly,
     // creechr says something and turns to face it. distinct from

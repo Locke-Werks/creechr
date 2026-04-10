@@ -50,6 +50,11 @@ add_executable(creechr WIN32
     src/heist/hoard.cpp
     src/heist/bitmap_capture.h
     src/heist/bitmap_capture.cpp
+    src/targets/target_provider.h
+    src/targets/window_target_provider.h
+    src/targets/window_target_provider.cpp
+    src/targets/cursor_target_provider.h
+    src/targets/cursor_target_provider.cpp
     src/util/logging.h
     src/util/logging.cpp
     src/util/dpi.h

@@ -5,8 +5,13 @@
 #include "render/overlay_window.h"
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
+#include "heist/hoard.h"
+#include "targets/cursor_target_provider.h"
+#include "targets/window_target_provider.h"
 #include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
+
+#include <QRandomGenerator>
 
 #include <QByteArray>
 #include <QCursor>
@@ -43,7 +48,11 @@ void CreechrApp::start()
     m_atlas = std::make_unique<cr::SpriteAtlas>();
     m_atlas->makePlaceholder();
 
+    m_hoard = std::make_unique<cr::Hoard>();
+    m_hoard->loadFromDisk(); // any orphans get logged + cleared
+
     m_creechr = std::make_unique<cr::Creechr>(*m_atlas);
+    m_creechr->setHoard(m_hoard.get());
 
     m_overlay = std::make_unique<OverlayWindow>();
     m_overlay->setCreechr(m_creechr.get());
@@ -56,6 +65,8 @@ void CreechrApp::start()
 #endif
 
     m_fullscreen = std::make_unique<cr::FullscreenDetector>();
+    m_winTargets = std::make_unique<cr::WindowTargetProvider>(m_windows.get());
+    m_curTargets = std::make_unique<cr::CursorTargetProvider>();
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
@@ -125,11 +136,10 @@ void CreechrApp::setPaused(bool paused)
 
 void CreechrApp::quitGracefully()
 {
-    // nothing to clean up yet. when there is, this is where it goes:
-    //  - restore stolen items from the hoard
-    //  - kill any active occluders
-    //  - flush the log
     LOG_INFO(QStringLiteral("CreechrApp::quitGracefully"));
+    if (m_hoard) {
+        m_hoard->restoreAll(); // critical: never leave a window hidden
+    }
     quit();
 }
 
@@ -193,6 +203,31 @@ void CreechrApp::onLogicTick()
                 m_overlay->hide();
                 LOG_INFO(QStringLiteral("fullscreen detected, hiding overlay"));
             }
+        }
+    }
+
+    // heist orchestration: every ~3 minutes (poisson-ish), if creechr
+    // doesn't have a pending heist and the user has been idle for >5s,
+    // pick a random target and stash it on creechr. the IdleState will
+    // see it on the next tick and start the heist sequence.
+    const qint64 sinceLastAttempt = now - m_lastHeistAttemptMs;
+    if (m_creechr && !m_creechr->heist()
+        && world.msSinceLastInput >= 5000
+        && sinceLastAttempt > 8000   // hard floor: at least 8s between attempts
+        && QRandomGenerator::global()->bounded(600) == 0 /* ~1/min at 10Hz */) {
+        m_lastHeistAttemptMs = now;
+        // 70% window heist, 30% cursor heist
+        const bool tryCursor = QRandomGenerator::global()->bounded(10) < 3;
+        std::optional<cr::HeistTarget> target;
+        if (!tryCursor && m_winTargets) {
+            target = m_winTargets->pickRandom(world.virtualDesktop);
+        }
+        if (!target.has_value() && m_curTargets) {
+            target = m_curTargets->current();
+        }
+        if (target.has_value()) {
+            LOG_INFO(QStringLiteral("orchestrator: starting heist on %1").arg(target->label));
+            m_creechr->beginHeist(*target);
         }
     }
 

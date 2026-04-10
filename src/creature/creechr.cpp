@@ -1,12 +1,20 @@
 #include "creature/creechr.h"
 #include "creature/world_context.h"
+#include "heist/bitmap_capture.h"
+#include "heist/hoard.h"
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
 
+#include <QCursor>
+#include <QDateTime>
 #include <QRandomGenerator>
 #include <QRect>
 #include <QtGlobal>
 #include <memory>
+
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 
 namespace cr {
 
@@ -30,15 +38,22 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
-        Q_UNUSED(c);
         if (world.msSinceLastInput > 30000) {
             return QStringLiteral("sleep");
         }
         m_remaining -= deltaMs;
-        if (m_remaining <= 0) {
-            return QStringLiteral("walk");
+        if (m_remaining > 0) {
+            return {};
         }
-        return {};
+
+        // small chance of starting a heist instead of just going for a
+        // walk. heist gating: must be on the floor, must have a pending
+        // target stashed on creechr (orchestrator put it there), must
+        // not have user-input within the last 5 seconds.
+        if (c.heist() && !c.heist()->grabbed && world.msSinceLastInput >= 5000) {
+            return QStringLiteral("heist_approach");
+        }
+        return QStringLiteral("walk");
     }
 
 private:
@@ -262,6 +277,296 @@ public:
     }
 };
 
+// === heist states ===
+//
+// flow: heist_approach -> heist_carry -> heist_wait -> heist_return -> idle
+//   approach: walk to the target's nearest edge, then capture+hide
+//   carry:    walk to chosen screen corner, then add to hoard
+//   wait:     stand at corner for 30-90s
+//   return:   walk back to original location, then restore
+//
+// any state along the way that detects user input (msSinceLastInput<300)
+// or hard timeouts will abort and restore. spec §5.1 safety 2.
+
+namespace heist_helpers {
+constexpr int kHeistMaxNonStashMs = 60000;     // §5.1 safety 2
+constexpr int kHeistInputAbortMs  = 300;        // user touched something
+} // namespace heist_helpers
+
+// little helper to compute the closer of (left, right) edges
+static int nearerEdge(int x, int left, int right)
+{
+    return (qAbs(x - left) <= qAbs(x - right)) ? left : right;
+}
+
+class HeistApproachState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_approach"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        m_elapsedMs = 0;
+        if (!c.heist()) return;
+        const QRect& f = c.heist()->target.screenRect;
+        const int targetX = nearerEdge(static_cast<int>(c.position().x()),
+                                       f.left() - 4, f.right() + 4);
+        const bool right = targetX > c.position().x();
+        c.setFacingRight(right);
+        c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
+        c.animator().setAnimation(right ? QStringLiteral("walk_right")
+                                        : QStringLiteral("walk_left"));
+        m_targetX = targetX;
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
+    {
+        m_elapsedMs += deltaMs;
+        if (m_elapsedMs > heist_helpers::kHeistMaxNonStashMs ||
+            world.msSinceLastInput < heist_helpers::kHeistInputAbortMs) {
+            LOG_INFO(QStringLiteral("heist: approach aborted"));
+            c.clearHeist();
+            return QStringLiteral("idle");
+        }
+        QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
+        c.setPosition(pos);
+        if (qAbs(static_cast<int>(pos.x()) - m_targetX) <= 4) {
+            return QStringLiteral("heist_grab");
+        }
+        return {};
+    }
+
+private:
+    int m_elapsedMs = 0;
+    int m_targetX = 0;
+};
+
+class HeistGrabState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_grab"); }
+
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
+    {
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+        c.setVelocity({ 0, 0 });
+
+        if (h->target.kind == TargetKind::Window) {
+#ifdef _WIN32
+            HWND hwnd = static_cast<HWND>(h->target.hwnd);
+            if (!hwnd || !IsWindow(hwnd)) {
+                LOG_WARN(QStringLiteral("heist: target window died before grab"));
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
+            QPixmap pm = capture::captureWindow(hwnd);
+            if (pm.isNull()) {
+                LOG_WARN(QStringLiteral("heist: PrintWindow returned null, aborting"));
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
+            // record original frame BEFORE hiding
+            RECT r = {};
+            GetWindowRect(hwnd, &r);
+            h->originalFrame = QRect(QPoint(r.left, r.top),
+                                     QPoint(r.right - 1, r.bottom - 1));
+            // hide
+            ShowWindow(hwnd, SW_HIDE);
+            h->carriedPixmap = pm;
+            h->grabbed = true;
+            LOG_INFO(QStringLiteral("heist: grabbed %1 (%2x%3)")
+                .arg(h->target.label).arg(pm.width()).arg(pm.height()));
+#endif
+        } else if (h->target.kind == TargetKind::Cursor) {
+            // cursor heist: capture the cursor's current pos and start
+            // following it until release. nothing to "grab" visually.
+            h->originalFrame = h->target.screenRect;
+            h->grabbed = true;
+        }
+
+        // pick a corner to carry to
+        const QRect& vd = world.virtualDesktop;
+        const bool topish  = QRandomGenerator::global()->bounded(2) == 0;
+        const bool leftish = QRandomGenerator::global()->bounded(2) == 0;
+        h->carryDestination = QPoint(
+            leftish ? vd.left() + 32 : vd.right() - 96,
+            topish  ? vd.top()  + 64 : vd.bottom() - 96
+        );
+        return QStringLiteral("heist_carry");
+    }
+};
+
+class HeistCarryState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_carry"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        m_elapsedMs = 0;
+        if (!c.heist()) return;
+        const bool right = c.heist()->carryDestination.x() > c.position().x();
+        c.setFacingRight(right);
+        c.setVelocity({ right ? 80.0 : -80.0, 0.0 });
+        c.animator().setAnimation(right ? QStringLiteral("walk_right")
+                                        : QStringLiteral("walk_left"));
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
+    {
+        m_elapsedMs += deltaMs;
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+
+        if (m_elapsedMs > heist_helpers::kHeistMaxNonStashMs ||
+            world.msSinceLastInput < heist_helpers::kHeistInputAbortMs) {
+            LOG_INFO(QStringLiteral("heist: carry aborted, returning early"));
+            return QStringLiteral("heist_return");
+        }
+
+        QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
+        c.setPosition(pos);
+
+        // for cursor heists, drag the cursor along with us
+        if (h->target.kind == TargetKind::Cursor) {
+#ifdef _WIN32
+            SetCursorPos(static_cast<int>(pos.x()) + 16,
+                         static_cast<int>(pos.y()) + 16);
+#endif
+        }
+
+        if (qAbs(static_cast<int>(pos.x()) - h->carryDestination.x()) <= 6) {
+            // arrived. stash.
+            h->stashedAt = QPoint(static_cast<int>(pos.x()),
+                                  static_cast<int>(pos.y()));
+            return QStringLiteral("heist_stash");
+        }
+        return {};
+    }
+
+private:
+    int m_elapsedMs = 0;
+};
+
+class HeistStashState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_stash"); }
+
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext&) override
+    {
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+        c.setVelocity({ 0, 0 });
+
+        // cursor heist returns the cursor immediately at the stash spot.
+        // it's a 1.2-1.8s gag, not a 30-second one.
+        if (h->target.kind == TargetKind::Cursor) {
+            h->returnAtMs = QDateTime::currentMSecsSinceEpoch();
+        } else {
+            h->returnAtMs = QDateTime::currentMSecsSinceEpoch()
+                + 30000 + QRandomGenerator::global()->bounded(60000);
+        }
+
+        // register in hoard so the quit handler can restore us
+        if (auto* hoard = c.hoard()) {
+            HoardEntry e;
+            e.kind  = (h->target.kind == TargetKind::Cursor) ? HoardKind::Cursor
+                                                              : HoardKind::Window;
+            e.label = h->target.label;
+            e.pixmap = h->carriedPixmap;
+            e.originPos = h->originalFrame.topLeft();
+            e.stashPos  = h->stashedAt;
+            e.hwnd = h->target.hwnd;
+            const QRect orig = h->originalFrame;
+#ifdef _WIN32
+            HWND hwnd = static_cast<HWND>(h->target.hwnd);
+            const TargetKind tk = h->target.kind;
+            e.restore = [hwnd, orig, tk]() {
+                if (tk == TargetKind::Window && hwnd && IsWindow(hwnd)) {
+                    SetWindowPos(hwnd, HWND_TOP,
+                                 orig.left(), orig.top(),
+                                 orig.width(), orig.height(),
+                                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                }
+                // cursor doesn't need an explicit restore — we already
+                // dragged it during carry, and on return we set it back.
+            };
+#else
+            e.restore = []() {};
+#endif
+            h->hoardId = hoard->add(e);
+            h->stashed = true;
+        }
+        return QStringLiteral("heist_wait");
+    }
+};
+
+class HeistWaitState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_wait"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, 0 });
+        c.animator().setAnimation(QStringLiteral("idle"));
+    }
+
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext&) override
+    {
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+        if (QDateTime::currentMSecsSinceEpoch() >= h->returnAtMs) {
+            return QStringLiteral("heist_return");
+        }
+        return {};
+    }
+};
+
+class HeistReturnState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_return"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        if (!c.heist()) return;
+        const QPoint orig = c.heist()->originalFrame.topLeft();
+        const bool right = orig.x() > c.position().x();
+        c.setFacingRight(right);
+        c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
+        c.animator().setAnimation(right ? QStringLiteral("walk_right")
+                                        : QStringLiteral("walk_left"));
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    {
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+        QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
+        c.setPosition(pos);
+
+        const int targetX = h->originalFrame.left();
+        if (qAbs(static_cast<int>(pos.x()) - targetX) <= 6) {
+            // arrived. restore via hoard.
+            if (auto* hoard = c.hoard(); hoard && !h->hoardId.isEmpty()) {
+                hoard->restoreById(h->hoardId);
+            }
+#ifdef _WIN32
+            if (h->target.kind == TargetKind::Cursor) {
+                SetCursorPos(h->originalFrame.center().x(),
+                             h->originalFrame.center().y());
+            }
+#endif
+            c.clearHeist();
+            return QStringLiteral("idle");
+        }
+        return {};
+    }
+};
+
 // nap. just sit there with eyes closed.
 class SleepState : public State
 {
@@ -320,6 +625,23 @@ Creechr::Creechr(const SpriteAtlas& atlas)
     m_states.registerState(std::make_unique<ClimbDownState>());
     m_states.registerState(std::make_unique<SleepState>());
     m_states.registerState(std::make_unique<WakeState>());
+    m_states.registerState(std::make_unique<HeistApproachState>());
+    m_states.registerState(std::make_unique<HeistGrabState>());
+    m_states.registerState(std::make_unique<HeistCarryState>());
+    m_states.registerState(std::make_unique<HeistStashState>());
+    m_states.registerState(std::make_unique<HeistWaitState>());
+    m_states.registerState(std::make_unique<HeistReturnState>());
+}
+
+void Creechr::beginHeist(HeistTarget t)
+{
+    m_heist.emplace();
+    m_heist->target = std::move(t);
+}
+
+void Creechr::clearHeist()
+{
+    m_heist.reset();
 }
 
 void Creechr::initialize(const WorldContext& world)

@@ -5,14 +5,32 @@
 
 #include "render/animator.h"
 #include "creature/state_machine.h"
+#include "targets/target_provider.h"
 
+#include <QPixmap>
+#include <QPoint>
 #include <QPointF>
 #include <QRect>
+#include <optional>
 
 namespace cr {
 
 class SpriteAtlas;
 struct WorldContext;
+class Hoard;
+
+// everything about a heist in progress. zeroed out between heists.
+struct HeistContext {
+    HeistTarget target;
+    QPixmap carriedPixmap;     // captured frame, drawn alongside creechr
+    QRect originalFrame;       // where to put it back
+    QPoint carryDestination;   // screen corner we're walking to
+    QString hoardId;           // entry in the hoard, set after grab
+    qint64 returnAtMs = 0;     // wall-clock time to start the return walk
+    QPoint stashedAt;          // where we dropped the bitmap (for drawing)
+    bool grabbed = false;
+    bool stashed = false;
+};
 
 class Creechr
 {
@@ -62,6 +80,17 @@ public:
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
 
+    // hoard is owned by CreechrApp; creechr just needs a borrowed pointer
+    // so heist states can register/restore entries.
+    void setHoard(Hoard* h) { m_hoard = h; }
+    Hoard* hoard() { return m_hoard; }
+
+    // active heist (or nullopt if none). heist states own this lifecycle.
+    HeistContext* heist() { return m_heist ? &*m_heist : nullptr; }
+    const HeistContext* heist() const { return m_heist ? &*m_heist : nullptr; }
+    void beginHeist(HeistTarget t);
+    void clearHeist();
+
 private:
     QPointF m_position { 100.0, 600.0 };
     QPointF m_velocity { 0.0,   0.0   };
@@ -69,6 +98,9 @@ private:
     int m_floorY = 0;
     int m_climbTargetX = -1;
     int m_climbTargetY = -1;
+
+    Hoard* m_hoard = nullptr;
+    std::optional<HeistContext> m_heist;
 
     Animator m_animator;
     StateMachine m_states;

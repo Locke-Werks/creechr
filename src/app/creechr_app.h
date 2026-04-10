@@ -15,6 +15,9 @@ class Creechr;
 class SpriteAtlas;
 class WindowEnumerator;
 class FullscreenDetector;
+class WindowTargetProvider;
+class CursorTargetProvider;
+class Hoard;
 }
 
 class CreechrApp : public QApplication
@@ -51,6 +54,10 @@ private:
     std::unique_ptr<cr::Creechr> m_creechr;
     std::unique_ptr<cr::WindowEnumerator> m_windows;
     std::unique_ptr<cr::FullscreenDetector> m_fullscreen;
+    std::unique_ptr<cr::WindowTargetProvider> m_winTargets;
+    std::unique_ptr<cr::CursorTargetProvider> m_curTargets;
+    std::unique_ptr<cr::Hoard> m_hoard;
+    qint64 m_lastHeistAttemptMs = 0;
     QTimer* m_logicTimer = nullptr;
     QTimer* m_renderTimer = nullptr;
     qint64 m_lastLogicMs = 0;

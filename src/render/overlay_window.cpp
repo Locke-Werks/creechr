@@ -107,7 +107,17 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     // virtual desktop has a negative origin (multimon to the left of
     // primary), we need to subtract our own geometry().topLeft()
     // before passing to QPainter (which works in widget-local coords).
-    const QRect dst = m_creechr->drawRect().translated(-geometry().topLeft());
+    const QPoint widgetOrigin = geometry().topLeft();
+    const QRect dst = m_creechr->drawRect().translated(-widgetOrigin);
     const QRect src = m_creechr->frameSrcRect();
     p.drawPixmap(dst, m_atlas->pixmap(), src);
+
+    // carried/stashed bitmap, if there's an active heist with a pixmap
+    if (const auto* h = m_creechr->heist(); h && !h->carriedPixmap.isNull()) {
+        const QPoint where = h->stashed
+            ? h->stashedAt
+            : QPoint(static_cast<int>(m_creechr->position().x()) + 36,
+                     static_cast<int>(m_creechr->position().y()) - 4);
+        p.drawPixmap(where - widgetOrigin, h->carriedPixmap);
+    }
 }

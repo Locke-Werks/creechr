@@ -109,7 +109,39 @@ yet but are planned.)
 - quitGracefully always calls Hoard::restoreAll() before exit. if you
   ever lose a window to creechr permanently, that's a bug, file it.
 
-### v0.3 — he steals individual ui controls (best effort)
+### v0.3 — he steals individual ui controls (best effort) ← you are here
+- UiaTargetProvider does CoInitializeEx + CoCreateInstance(CUIAutomation)
+  on the main thread (NOT on a worker thread per spec — see below).
+  walks the foreground window's UIA descendants every time the
+  orchestrator picks a uia heist, filters to ControlType in
+  {button, hyperlink, image, menuitem, listitem} AND IsOffscreen=false.
+- the heist orchestrator now picks: 50% window heist, 30% uia heist,
+  20% cursor heist (cursor is the always-available fallback if uia/window
+  picks come back empty).
+- uia heist flow piggybacks on the existing heist state machine.
+  HeistGrab handles TargetKind::UiaElement by BitBlt-capturing the
+  element's screen rect and stashing the pixmap on the heist context.
+  the rest of the flow (carry, stash, return) is the same as window
+  heists. nothing in the source app gets touched at any point.
+- known to find buttons in notepad and chrome dev mode pages. the chrome
+  case is a coin flip per the usual UIA-on-chromium reliability story.
+
+#### v0.3 spec deviations (read these)
+- **UIA on the main thread, not a worker thread.** spec §6.1 says all
+  UIA work has to happen on a dedicated COM-init worker thread because
+  UIA is slow and would stutter the render loop. this version cuts that
+  corner because the demo target sizes (notepad, simple pages) are small
+  enough that the scan completes in single-digit milliseconds. if you
+  see a creechr stutter when the orchestrator picks a uia target, this
+  is the first thing to refactor.
+- **no occluder window class.** spec §6.2 wants a separate transparent
+  always-on-top occluder per heist that draws an opaque background-color
+  rect over the original element so it visually disappears. this version
+  just BitBlt-captures the rect and has creechr carry the visual duplicate
+  off to a corner. the original element is never touched. less dramatic,
+  way safer (zero risk of orphaning an occluder window over a user app).
+  add the occluder back in v0.4 once the rest of the rough edges are sanded.
+
 ### v1.0 — he steals stuff out of webpages (with the extension)
 
 ## known issues

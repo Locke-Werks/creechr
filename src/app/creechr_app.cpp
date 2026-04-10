@@ -7,6 +7,7 @@
 #include "util/logging.h"
 #include "heist/hoard.h"
 #include "targets/cursor_target_provider.h"
+#include "targets/uia_target_provider.h"
 #include "targets/window_target_provider.h"
 #include "util/win32_helpers.h"
 #include "world/fullscreen_detector.h"
@@ -68,6 +69,7 @@ void CreechrApp::start()
     m_fullscreen = std::make_unique<cr::FullscreenDetector>();
     m_winTargets = std::make_unique<cr::WindowTargetProvider>(m_windows.get());
     m_curTargets = std::make_unique<cr::CursorTargetProvider>();
+    m_uiaTargets = std::make_unique<cr::UiaTargetProvider>();
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
@@ -198,11 +200,14 @@ void CreechrApp::onLogicTick()
         && sinceLastAttempt > 8000   // hard floor: at least 8s between attempts
         && QRandomGenerator::global()->bounded(600) == 0 /* ~1/min at 10Hz */) {
         m_lastHeistAttemptMs = now;
-        // 70% window heist, 30% cursor heist
-        const bool tryCursor = QRandomGenerator::global()->bounded(10) < 3;
+        // 50% window, 30% uia, 20% cursor. uia + window can fail to find
+        // a target so cursor is the always-available fallback.
+        const int roll = QRandomGenerator::global()->bounded(10);
         std::optional<cr::HeistTarget> target;
-        if (!tryCursor && m_winTargets) {
+        if (roll < 5 && m_winTargets) {
             target = m_winTargets->pickRandom(world.virtualDesktop);
+        } else if (roll < 8 && m_uiaTargets) {
+            target = m_uiaTargets->pickRandom(world.virtualDesktop);
         }
         if (!target.has_value() && m_curTargets) {
             target = m_curTargets->current();

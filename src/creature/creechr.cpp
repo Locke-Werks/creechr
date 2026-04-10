@@ -353,7 +353,25 @@ public:
         if (!h) return QStringLiteral("idle");
         c.setVelocity({ 0, 0 });
 
-        if (h->target.kind == TargetKind::Window) {
+        if (h->target.kind == TargetKind::UiaElement) {
+            // SPEC DEVIATION (§6.2): the spec wants a full occluder
+            // window class drawn over the original element rect to make
+            // it visually disappear. v0.3 just BitBlt-captures the rect
+            // and has creechr carry the duplicate pixmap. the original
+            // element is never touched. less dramatic, dramatically
+            // safer (no orphaned occluder windows over user apps).
+            QPixmap pm = capture::captureScreenRect(h->target.screenRect);
+            if (pm.isNull()) {
+                LOG_WARN(QStringLiteral("heist: BitBlt of uia rect failed, aborting"));
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
+            h->originalFrame = h->target.screenRect;
+            h->carriedPixmap = pm;
+            h->grabbed = true;
+            LOG_INFO(QStringLiteral("heist: grabbed uia element %1").arg(h->target.label));
+        }
+        else if (h->target.kind == TargetKind::Window) {
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(h->target.hwnd);
             if (!hwnd || !IsWindow(hwnd)) {

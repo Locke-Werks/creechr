@@ -17,6 +17,7 @@ class WindowEnumerator;
 class FullscreenDetector;
 class WindowTargetProvider;
 class CursorTargetProvider;
+class UiaTargetProvider;
 class Hoard;
 }
 
@@ -56,6 +57,7 @@ private:
     std::unique_ptr<cr::FullscreenDetector> m_fullscreen;
     std::unique_ptr<cr::WindowTargetProvider> m_winTargets;
     std::unique_ptr<cr::CursorTargetProvider> m_curTargets;
+    std::unique_ptr<cr::UiaTargetProvider> m_uiaTargets;
     std::unique_ptr<cr::Hoard> m_hoard;
     qint64 m_lastHeistAttemptMs = 0;
     QTimer* m_logicTimer = nullptr;

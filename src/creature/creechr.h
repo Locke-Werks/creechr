@@ -18,6 +18,7 @@ namespace cr {
 class SpriteAtlas;
 struct WorldContext;
 class Hoard;
+class ExtensionTargetProvider;
 
 // everything about a heist in progress. zeroed out between heists.
 struct HeistContext {
@@ -92,6 +93,13 @@ public:
     void setHoard(Hoard* h) { m_hoard = h; }
     Hoard* hoard() { return m_hoard; }
 
+    // extension target provider, also owned by CreechrApp. heist states
+    // for DomElement targets call requestSteal/requestRestore on this
+    // and poll hasStealAck/hasRestoreAck to know when to advance.
+    // nullptr if the pipe server failed to start.
+    void setExtensionProvider(ExtensionTargetProvider* p) { m_ext = p; }
+    ExtensionTargetProvider* extensionProvider() { return m_ext; }
+
     // active heist (or nullopt if none). heist states own this lifecycle.
     HeistContext* heist() { return m_heist ? &*m_heist : nullptr; }
     const HeistContext* heist() const { return m_heist ? &*m_heist : nullptr; }
@@ -107,6 +115,7 @@ private:
     int m_climbTargetY = -1;
 
     Hoard* m_hoard = nullptr;
+    ExtensionTargetProvider* m_ext = nullptr;
     std::optional<HeistContext> m_heist;
 
     Animator m_animator;

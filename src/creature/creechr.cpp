@@ -3,6 +3,7 @@
 #include "heist/bitmap_capture.h"
 #include "heist/hoard.h"
 #include "render/sprite_atlas.h"
+#include "targets/extension_target_provider.h"
 #include "util/logging.h"
 #include "util/win32_helpers.h"
 
@@ -389,6 +390,29 @@ public:
             m_capturedOk = true;
             LOG_INFO(QStringLiteral("heist: pre-captured uia element %1").arg(h->target.label));
         }
+        else if (h->target.kind == TargetKind::DomElement) {
+            // dom heist: BitBlt the rect FIRST so we have the visual,
+            // then ask the extension to actually remove the element from
+            // the page. tick() waits for the ack before transitioning.
+            QPixmap pm = capture::captureScreenRect(h->target.screenRect);
+            if (pm.isNull()) {
+                LOG_WARN(QStringLiteral("heist: BitBlt of dom rect failed"));
+                return;
+            }
+            h->originalFrame = h->target.screenRect;
+            h->carriedPixmap = pm;
+            if (auto* ext = c.extensionProvider()) {
+                // make sure no stale ack from a prior cycle is sitting around
+                ext->consumeStealAck(h->target.opaqueId);
+                ext->requestSteal(h->target.opaqueId);
+            } else {
+                LOG_WARN(QStringLiteral("heist: dom target but no ext provider"));
+                return;
+            }
+            m_capturedOk = true;
+            LOG_INFO(QStringLiteral("heist: pre-captured dom element %1, awaiting steal_ack")
+                .arg(h->target.label));
+        }
         else if (h->target.kind == TargetKind::Window) {
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(h->target.hwnd);
@@ -429,6 +453,24 @@ public:
 
         if (m_phase == Phase::Grabbing) {
             if (!c.animator().finished()) return {};
+            // grab anim done. for DOM heists ALSO wait for the
+            // extension's steal_ack so we know the element is actually
+            // gone from the page before we proceed. 4-second hard
+            // timeout in case the ack never comes.
+            if (h->target.kind == TargetKind::DomElement) {
+                if (auto* ext = c.extensionProvider()) {
+                    if (!ext->hasStealAck(h->target.opaqueId)) {
+                        m_domAckWaitMs += 16; // ~one tick
+                        if (m_domAckWaitMs > 4000) {
+                            LOG_WARN(QStringLiteral("heist: dom steal_ack timeout, aborting"));
+                            c.clearHeist();
+                            return QStringLiteral("idle");
+                        }
+                        return {};
+                    }
+                    ext->consumeStealAck(h->target.opaqueId);
+                }
+            }
             // grab anim done. NOW hide the source (window heists only)
             // and bridge into a brief bite loop.
 #ifdef _WIN32
@@ -468,6 +510,7 @@ private:
     Phase m_phase = Phase::Grabbing;
     bool m_capturedOk = false;
     int m_biteMsLeft = 0;
+    int m_domAckWaitMs = 0;
 };
 
 class HeistCarryState : public State
@@ -560,8 +603,13 @@ public:
         // register in hoard so the quit handler can restore us
         if (auto* hoard = c.hoard()) {
             HoardEntry e;
-            e.kind  = (h->target.kind == TargetKind::Cursor) ? HoardKind::Cursor
-                                                              : HoardKind::Window;
+            switch (h->target.kind) {
+            case TargetKind::Cursor:     e.kind = HoardKind::Cursor; break;
+            case TargetKind::UiaElement: e.kind = HoardKind::Uia;    break;
+            case TargetKind::DomElement: e.kind = HoardKind::Dom;    break;
+            case TargetKind::Window:
+            default:                     e.kind = HoardKind::Window; break;
+            }
             e.label = h->target.label;
             e.pixmap = h->carriedPixmap;
             e.originPos = h->originalFrame.topLeft();
@@ -571,15 +619,26 @@ public:
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(h->target.hwnd);
             const TargetKind tk = h->target.kind;
-            e.restore = [hwnd, orig, tk]() {
+            // dom restores need to ask the extension to put the element
+            // back. capturing a raw pointer to the provider is fine — it
+            // outlives the hoard (both owned by CreechrApp, destroyed
+            // in declared order, hoard first).
+            ExtensionTargetProvider* extPtr = c.extensionProvider();
+            const QString domId = h->target.opaqueId;
+            e.restore = [hwnd, orig, tk, extPtr, domId]() {
                 if (tk == TargetKind::Window && hwnd && IsWindow(hwnd)) {
                     SetWindowPos(hwnd, HWND_TOP,
                                  orig.left(), orig.top(),
                                  orig.width(), orig.height(),
                                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 }
+                if (tk == TargetKind::DomElement && extPtr && !domId.isEmpty()) {
+                    extPtr->requestRestore(domId);
+                }
                 // cursor doesn't need an explicit restore — we already
                 // dragged it during carry, and on return we set it back.
+                // uia doesn't need anything either — we never modified
+                // the source app, the visual went into creechr's hands.
             };
 #else
             e.restore = []() {};

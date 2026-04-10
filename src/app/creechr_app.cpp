@@ -8,6 +8,7 @@
 #include "heist/hoard.h"
 #include "ipc/extension_pipe_server.h"
 #include "targets/cursor_target_provider.h"
+#include "targets/extension_target_provider.h"
 #include "targets/uia_target_provider.h"
 #include "targets/window_target_provider.h"
 #include "util/win32_helpers.h"
@@ -77,6 +78,8 @@ void CreechrApp::start()
         LOG_WARN(QStringLiteral("extension pipe server failed to start, "
                                 "browser theft will be unavailable"));
     }
+    m_extTargets = std::make_unique<cr::ExtensionTargetProvider>(m_extPipe.get(), this);
+    m_creechr->setExtensionProvider(m_extTargets.get());
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
@@ -220,15 +223,24 @@ void CreechrApp::onTick()
         && sinceLastAttempt > 2000
         && randomGateOk) {
         m_lastHeistAttemptMs = now;
+        // roll table:
+        //   0..3 (40%) -> window heist
+        //   4..5 (20%) -> uia heist
+        //   6..7 (20%) -> dom heist (only if extension is connected and has cache)
+        //   8..9 (20%) -> cursor heist
+        // any provider that comes back empty falls through to cursor.
         const int roll = QRandomGenerator::global()->bounded(10);
         std::optional<cr::HeistTarget> target;
         const char* whichRoll = "?";
-        if (roll < 5 && m_winTargets) {
+        if (roll < 4 && m_winTargets) {
             whichRoll = "window";
             target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
-        } else if (roll < 8 && m_uiaTargets) {
+        } else if (roll < 6 && m_uiaTargets) {
             whichRoll = "uia";
             target = m_uiaTargets->pickRandom(g_cachedWorld.virtualDesktop);
+        } else if (roll < 8 && m_extTargets && m_extTargets->isReady()) {
+            whichRoll = "dom";
+            target = m_extTargets->pickRandom(g_cachedWorld.virtualDesktop);
         } else {
             whichRoll = "cursor";
         }

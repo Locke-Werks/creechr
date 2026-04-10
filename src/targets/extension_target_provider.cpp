@@ -164,12 +164,36 @@ void ExtensionTargetProvider::onPipeMessage(const QJsonObject& msg)
     }
     else if (type == QLatin1String("steal_ack")) {
         const QString id = msg.value(QStringLiteral("targetId")).toString();
+        m_stealAcks.insert(id, QDateTime::currentMSecsSinceEpoch());
+        LOG_INFO(QStringLiteral("ext: steal_ack %1").arg(id));
         emit stealAcked(id);
     }
     else if (type == QLatin1String("restore_ack")) {
         const QString id = msg.value(QStringLiteral("targetId")).toString();
+        m_restoreAcks.insert(id, QDateTime::currentMSecsSinceEpoch());
+        LOG_INFO(QStringLiteral("ext: restore_ack %1").arg(id));
         emit restoreAcked(id);
     }
+}
+
+bool ExtensionTargetProvider::hasStealAck(const QString& id) const
+{
+    return m_stealAcks.contains(id);
+}
+
+void ExtensionTargetProvider::consumeStealAck(const QString& id)
+{
+    m_stealAcks.remove(id);
+}
+
+bool ExtensionTargetProvider::hasRestoreAck(const QString& id) const
+{
+    return m_restoreAcks.contains(id);
+}
+
+void ExtensionTargetProvider::consumeRestoreAck(const QString& id)
+{
+    m_restoreAcks.remove(id);
 }
 
 } // namespace cr

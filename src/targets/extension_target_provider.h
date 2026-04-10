@@ -58,6 +58,15 @@ public:
 
     bool isReady() const;
 
+    // poll-based ack inspection for the heist state machine. when an
+    // ack arrives we record the id; the heist state polls these every
+    // tick to know when to proceed. consumeXxxAck removes the entry so
+    // a stale ack from a previous heist cant bleed through.
+    bool hasStealAck(const QString& id) const;
+    void consumeStealAck(const QString& id);
+    bool hasRestoreAck(const QString& id) const;
+    void consumeRestoreAck(const QString& id);
+
 signals:
     void stealAcked(const QString& targetId);
     void restoreAcked(const QString& targetId);
@@ -75,6 +84,8 @@ private:
     QTimer* m_autoScanTimer = nullptr;
     QVector<DomTarget> m_cached;
     qint64 m_lastScanMs = 0;
+    QHash<QString, qint64> m_stealAcks;
+    QHash<QString, qint64> m_restoreAcks;
 };
 
 } // namespace cr

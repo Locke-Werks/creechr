@@ -1,9 +1,16 @@
 #include "app/creechr_app.h"
 #include "app/tray_icon.h"
+#include "creature/creechr.h"
+#include "creature/world_context.h"
 #include "render/overlay_window.h"
+#include "render/sprite_atlas.h"
 #include "util/logging.h"
 
 #include <QByteArray>
+#include <QCursor>
+#include <QDateTime>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QTimer>
 
 CreechrApp::CreechrApp(int& argc, char** argv)
@@ -31,11 +38,42 @@ void CreechrApp::start()
     else if (lvl == "error") cr::setLogLevel(cr::LogLevel::Error);
     LOG_INFO(QStringLiteral("CreechrApp::start"));
 
+    m_atlas = std::make_unique<cr::SpriteAtlas>();
+    m_atlas->makePlaceholder();
+
+    m_creechr = std::make_unique<cr::Creechr>(*m_atlas);
+
     m_overlay = std::make_unique<OverlayWindow>();
+    m_overlay->setCreechr(m_creechr.get());
+    m_overlay->setAtlas(m_atlas.get());
     m_overlay->show();
+
+    // give creechr a real world before letting his states fire enter()
+    cr::WorldContext bootstrapWorld;
+    QRect db;
+    for (QScreen* s : QGuiApplication::screens()) {
+        db = db.united(s->geometry());
+    }
+    bootstrapWorld.virtualDesktop = db;
+    bootstrapWorld.cursorPos = QCursor::pos();
+    m_creechr->initialize(bootstrapWorld);
 
     m_tray = std::make_unique<TrayIcon>(this);
     m_tray->show();
+
+    // logic at 10Hz, render at 30Hz. spec §4.2.
+    m_logicTimer = new QTimer(this);
+    m_logicTimer->setInterval(100);
+    connect(m_logicTimer, &QTimer::timeout, this, &CreechrApp::onLogicTick);
+    m_logicTimer->start();
+
+    m_renderTimer = new QTimer(this);
+    m_renderTimer->setInterval(33);
+    connect(m_renderTimer, &QTimer::timeout, this, &CreechrApp::onRenderTick);
+    m_renderTimer->start();
+
+    m_lastLogicMs  = QDateTime::currentMSecsSinceEpoch();
+    m_lastRenderMs = m_lastLogicMs;
 
     // dev convenience: if CREECHR_TEST_EXIT_MS is set in the env, schedule
     // a quit after that many ms. this is so the build/test loop can run
@@ -66,5 +104,67 @@ void CreechrApp::quitGracefully()
     //  - restore stolen items from the hoard
     //  - kill any active occluders
     //  - flush the log
+    LOG_INFO(QStringLiteral("CreechrApp::quitGracefully"));
     quit();
+}
+
+namespace {
+// hand-rolled "millis since last input" — in v0.1 we just track the
+// cursor position and reset our own counter when it moves. v0.2 swaps
+// in GetLastInputInfo for keyboard awareness too.
+struct InputIdleTracker {
+    QPoint lastCursor;
+    qint64 lastChangeMs = 0;
+    int sample(qint64 nowMs)
+    {
+        const QPoint c = QCursor::pos();
+        if (c != lastCursor) {
+            lastCursor = c;
+            lastChangeMs = nowMs;
+        }
+        if (lastChangeMs == 0) {
+            lastChangeMs = nowMs;
+        }
+        return static_cast<int>(nowMs - lastChangeMs);
+    }
+};
+InputIdleTracker g_idle;
+} // namespace
+
+void CreechrApp::onLogicTick()
+{
+    if (m_paused || !m_creechr) {
+        return;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    int dt = static_cast<int>(now - m_lastLogicMs);
+    m_lastLogicMs = now;
+    if (dt < 0)   dt = 0;
+    if (dt > 500) dt = 500; // dont let a long pause snap-translate him
+
+    cr::WorldContext world;
+    QRect db;
+    for (QScreen* s : QGuiApplication::screens()) {
+        db = db.united(s->geometry());
+    }
+    world.virtualDesktop = db;
+    world.cursorPos = QCursor::pos();
+    world.msSinceLastInput = g_idle.sample(now);
+
+    m_creechr->tickLogic(dt, world);
+}
+
+void CreechrApp::onRenderTick()
+{
+    if (m_paused || !m_creechr || !m_overlay) {
+        return;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    int dt = static_cast<int>(now - m_lastRenderMs);
+    m_lastRenderMs = now;
+    if (dt < 0)   dt = 0;
+    if (dt > 500) dt = 500;
+
+    m_creechr->tickRender(dt);
+    m_overlay->update();
 }

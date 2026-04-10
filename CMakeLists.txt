@@ -35,6 +35,11 @@ add_executable(creechr WIN32
     src/render/sprite_atlas.cpp
     src/render/animator.h
     src/render/animator.cpp
+    src/creature/creechr.h
+    src/creature/creechr.cpp
+    src/creature/state_machine.h
+    src/creature/state_machine.cpp
+    src/creature/world_context.h
     src/util/logging.h
     src/util/logging.cpp
 )

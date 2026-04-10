@@ -9,6 +9,11 @@
 
 class TrayIcon;
 class OverlayWindow;
+class QTimer;
+namespace cr {
+class Creechr;
+class SpriteAtlas;
+}
 
 class CreechrApp : public QApplication
 {
@@ -33,8 +38,18 @@ public slots:
 signals:
     void pauseChanged(bool paused);
 
+private slots:
+    void onLogicTick();
+    void onRenderTick();
+
 private:
     std::unique_ptr<TrayIcon> m_tray;
     std::unique_ptr<OverlayWindow> m_overlay;
+    std::unique_ptr<cr::SpriteAtlas> m_atlas;
+    std::unique_ptr<cr::Creechr> m_creechr;
+    QTimer* m_logicTimer = nullptr;
+    QTimer* m_renderTimer = nullptr;
+    qint64 m_lastLogicMs = 0;
+    qint64 m_lastRenderMs = 0;
     bool m_paused = false;
 };

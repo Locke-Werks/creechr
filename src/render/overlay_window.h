@@ -14,6 +14,11 @@
 
 #include <QWidget>
 
+namespace cr {
+class Creechr;
+class SpriteAtlas;
+}
+
 class OverlayWindow : public QWidget
 {
     Q_OBJECT
@@ -21,6 +26,11 @@ class OverlayWindow : public QWidget
 public:
     explicit OverlayWindow(QWidget* parent = nullptr);
     ~OverlayWindow() override;
+
+    // weak refs — owned by CreechrApp. set once at startup, never null
+    // for the rest of the process lifetime.
+    void setCreechr(const cr::Creechr* c) { m_creechr = c; }
+    void setAtlas(const cr::SpriteAtlas* a) { m_atlas = a; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -35,4 +45,7 @@ private:
     // its window flags but i don't trust it not to drop them on a
     // restyle, so we set them again, manually, after every show().
     void applyClickThroughFlags();
+
+    const cr::Creechr* m_creechr = nullptr;
+    const cr::SpriteAtlas* m_atlas = nullptr;
 };

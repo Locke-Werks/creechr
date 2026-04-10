@@ -1,4 +1,6 @@
 #include "render/overlay_window.h"
+#include "creature/creechr.h"
+#include "render/sprite_atlas.h"
 #include "util/logging.h"
 
 #include <QGuiApplication>
@@ -94,13 +96,18 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     QPainter p(this);
     p.setCompositionMode(QPainter::CompositionMode_Source);
     p.fillRect(rect(), Qt::transparent);
-
-    // dev marker so i can prove the overlay is actually rendering. it's
-    // a small filled rectangle in the top-left of the virtual desktop.
-    // gets ripped out the moment a real sprite shows up.
     p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    p.fillRect(QRect(8, 8, 32, 32), QColor(220, 50, 140, 200));
-    p.setPen(QColor(255, 255, 255, 220));
-    p.drawText(QRect(8, 8, 200, 32), Qt::AlignVCenter | Qt::AlignLeft,
-               QStringLiteral("  creechr overlay"));
+
+    if (!m_creechr || !m_atlas) {
+        return;
+    }
+
+    // creechr's drawRect is in virtual-desktop coords. our widget's
+    // top-left maps to the virtual desktop's top-left, but if the
+    // virtual desktop has a negative origin (multimon to the left of
+    // primary), we need to subtract our own geometry().topLeft()
+    // before passing to QPainter (which works in widget-local coords).
+    const QRect dst = m_creechr->drawRect().translated(-geometry().topLeft());
+    const QRect src = m_creechr->frameSrcRect();
+    p.drawPixmap(dst, m_atlas->pixmap(), src);
 }

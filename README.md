@@ -85,7 +85,30 @@ yet but are planned.)
 - logs to %LOCALAPPDATA%\creechr\creechr\creechr.log (rotated at 1MB,
   3 files kept). set CREECHR_LOG_LEVEL=debug if you want the chatty stuff.
 
-### v0.2 — he steals small windows and the cursor
+### v0.2 — he steals small windows and the cursor ← you are here
+- HeistExecutor wired into creechr's main state machine as a sequence
+  of states (heist_approach, heist_grab, heist_carry, heist_stash,
+  heist_wait, heist_return). all 60s-bounded so a stuck heist can't
+  zombie out forever.
+- WindowTargetProvider scans the world enumerator's snapshot for small
+  floating windows (80-600 px each axis, not maximized, not the shell,
+  not consent.exe / logon ui). picks one at random.
+- window heist flow: PrintWindow with PW_RENDERFULLCONTENT to capture
+  the bitmap, ShowWindow SW_HIDE to make it disappear, walk to a random
+  screen corner with the captured pixmap drawn next to creechr, drop it,
+  wait 30-90s, walk back, SetWindowPos to put it back exactly where it
+  was. registered in the hoard the entire time.
+- cursor heists: SetCursorPos to drag the mouse along with creechr's
+  mouth offset for ~1.5s, then put it back. clamped to virtual desktop
+  bounds. aborts immediately if any mouse button is pressed mid-carry.
+- input gating: heists only START if GetLastInputInfo says you've been
+  idle for >5s, and ABORT mid-carry if you start clicking again.
+- Hoard persists to %LOCALAPPDATA%\creechr\creechr\hoard.json. orphan
+  entries from a hard crash get logged + cleared on next boot (we cant
+  reconstruct restore lambdas across processes — sorry).
+- quitGracefully always calls Hoard::restoreAll() before exit. if you
+  ever lose a window to creechr permanently, that's a bug, file it.
+
 ### v0.3 — he steals individual ui controls (best effort)
 ### v1.0 — he steals stuff out of webpages (with the extension)
 
@@ -102,8 +125,17 @@ yet but are planned.)
   maximized window), the sprite renders with negative y coords and qt
   clips it. you'll see his head pop above the screen. fix is to clamp
   the climb destination to >= 0.
-- idle behaviors (blink, yawn, look around) are not in v0.1. he just
-  stands there during idle. it makes him look constipated. v0.2.
+- idle behaviors (blink, yawn, look around) STILL not implemented as
+  of v0.2. he just stands there during idle. it makes him look
+  constipated. allegedly v0.3.
+- heist orchestrator picks targets at random, no preference for things
+  that look fun. you might watch him steal the same calculator window
+  three times in a row. that's the rng working as designed, sorry.
+- if a stolen window's process exits while creechr is carrying its
+  bitmap to the corner, the restore callback no-ops on a dead hwnd
+  and we just drop the entry. visually he'll still walk it to the
+  corner and "drop" it, then walk back to nothing. nbd, just looks
+  silly.
 - right click menus from other apps sometimes draw on top of him. fine.
 
 ## license

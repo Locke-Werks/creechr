@@ -8,6 +8,7 @@
 #include "heist/hoard.h"
 #include "targets/cursor_target_provider.h"
 #include "targets/window_target_provider.h"
+#include "util/win32_helpers.h"
 #include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
 
@@ -143,28 +144,9 @@ void CreechrApp::quitGracefully()
     quit();
 }
 
-namespace {
-// hand-rolled "millis since last input" — in v0.1 we just track the
-// cursor position and reset our own counter when it moves. v0.2 swaps
-// in GetLastInputInfo for keyboard awareness too.
-struct InputIdleTracker {
-    QPoint lastCursor;
-    qint64 lastChangeMs = 0;
-    int sample(qint64 nowMs)
-    {
-        const QPoint c = QCursor::pos();
-        if (c != lastCursor) {
-            lastCursor = c;
-            lastChangeMs = nowMs;
-        }
-        if (lastChangeMs == 0) {
-            lastChangeMs = nowMs;
-        }
-        return static_cast<int>(nowMs - lastChangeMs);
-    }
-};
-InputIdleTracker g_idle;
-} // namespace
+// v0.2 uses GetLastInputInfo via cr::win32::millisSinceLastInput() so
+// keyboard activity counts too. v0.1 used a hand-rolled cursor tracker
+// that ignored typing — embarrassing in retrospect.
 
 void CreechrApp::onLogicTick()
 {
@@ -184,7 +166,7 @@ void CreechrApp::onLogicTick()
     }
     world.virtualDesktop = db;
     world.cursorPos = QCursor::pos();
-    world.msSinceLastInput = g_idle.sample(now);
+    world.msSinceLastInput = cr::win32::millisSinceLastInput();
     if (m_windows) {
         world.windowRects = m_windows->snapshotRects();
     }

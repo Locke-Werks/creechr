@@ -59,6 +59,8 @@ add_executable(creechr WIN32
     src/util/logging.cpp
     src/util/dpi.h
     src/util/dpi.cpp
+    src/util/win32_helpers.h
+    src/util/win32_helpers.cpp
 )
 
 target_compile_definitions(creechr PRIVATE

@@ -4,6 +4,7 @@
 #include "heist/hoard.h"
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
+#include "util/win32_helpers.h"
 
 #include <QCursor>
 #include <QDateTime>
@@ -428,11 +429,24 @@ public:
         QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
         c.setPosition(pos);
 
-        // for cursor heists, drag the cursor along with us
+        // for cursor heists, drag the cursor along with us — but bail
+        // immediately if any mouse button is currently down (the user
+        // is mid-click and grabbing the cursor would actively break
+        // their workflow). also clamp to the virtual desktop bounds so
+        // we never strand the pointer on a disconnected screen.
         if (h->target.kind == TargetKind::Cursor) {
+            if (cr::win32::anyMouseButtonDown()) {
+                LOG_INFO(QStringLiteral("heist: mouse button down mid-cursor-carry, releasing"));
+                return QStringLiteral("heist_return");
+            }
 #ifdef _WIN32
-            SetCursorPos(static_cast<int>(pos.x()) + 16,
-                         static_cast<int>(pos.y()) + 16);
+            int cx = qBound(world.virtualDesktop.left()  + 4,
+                            static_cast<int>(pos.x()) + 16,
+                            world.virtualDesktop.right() - 4);
+            int cy = qBound(world.virtualDesktop.top()   + 4,
+                            static_cast<int>(pos.y()) + 16,
+                            world.virtualDesktop.bottom() - 4);
+            SetCursorPos(cx, cy);
 #endif
         }
 

@@ -531,6 +531,9 @@ public:
     {
         m_phaseMs += deltaMs;
         if (m_phaseMs > 350) {
+            // launch puff at the anchor — visual for "the hook bit in"
+            c.spawnPuff(QPointF(c.rappelAnchorX(), c.rappelAnchorY()),
+                        4, QColor(80, 80, 80, 220), 350);
             // direction: anchor above us = climb, anchor below = descend
             if (c.rappelAnchorY() < c.position().y()) {
                 return QStringLiteral("rappel_climb");
@@ -823,10 +826,17 @@ public:
 
         // floor bounce
         if (pos.y() >= floorY) {
+            const bool wasFalling = vel.y() > 60;
             pos.setY(floorY);
             if (vel.y() > 0) {
                 vel.setY(-vel.y() * gnaw_constants::kBounceRestitution);
                 vel.setX( vel.x() * gnaw_constants::kBounceFriction);
+            }
+            // dust puff on hard landings
+            if (wasFalling) {
+                c.spawnPuff(QPointF(pos.x() + kSpriteWidth / 2.0,
+                                    pos.y() + kSpriteHeight),
+                            6, QColor(180, 170, 165, 220), 500);
             }
         }
         // wall bounce (less interesting but stops him going off screen)
@@ -1066,6 +1076,9 @@ public:
 #endif
             h->grabbed = true;
             c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+            // small splash of body-color particles at the carry anchor
+            // — visual feedback for "the bite landed"
+            c.spawnPuff(QPointF(c.carryAnchorScreen()), 5, QColor(220, 50, 140, 230), 400);
             m_phase = Phase::Biting;
             m_biteMsLeft = 480; // ~6 frames of bite at 80ms each
             return {};
@@ -1408,6 +1421,7 @@ void Creechr::tickLogic(int deltaMs, const WorldContext& world)
 void Creechr::tickRender(int deltaMs)
 {
     m_animator.tick(deltaMs);
+    tickParticles(deltaMs);
 }
 
 QRect Creechr::drawRect() const
@@ -1441,6 +1455,42 @@ QString Creechr::currentSpeech() const
     if (m_speechText.isEmpty()) return {};
     if (QDateTime::currentMSecsSinceEpoch() >= m_speechExpiryMs) return {};
     return m_speechText;
+}
+
+void Creechr::spawnPuff(QPointF where, int count, QColor color, int lifetimeMs)
+{
+    auto* rng = QRandomGenerator::global();
+    for (int i = 0; i < count; ++i) {
+        Particle pt;
+        pt.pos = where;
+        // random outward velocity in a half-disk pointing roughly upward
+        const double angle = (rng->bounded(140) - 70) * 3.14159 / 180.0; // -70..+70 deg from up
+        const double speed = 40.0 + rng->bounded(60);
+        pt.vel = QPointF(std::sin(angle) * speed, -std::cos(angle) * speed);
+        pt.lifetimeMs = lifetimeMs - 100 + rng->bounded(200);
+        pt.color = color;
+        m_particles.push_back(pt);
+        if (m_particles.size() > 256) {
+            // hard cap so a runaway state doesnt accumulate forever
+            m_particles.removeFirst();
+        }
+    }
+}
+
+void Creechr::tickParticles(int deltaMs)
+{
+    constexpr double kParticleGravity = 380.0;
+    const double dt = deltaMs / 1000.0;
+    for (int i = m_particles.size() - 1; i >= 0; --i) {
+        Particle& pt = m_particles[i];
+        pt.ageMs += deltaMs;
+        if (pt.ageMs >= pt.lifetimeMs) {
+            m_particles.removeAt(i);
+            continue;
+        }
+        pt.vel.setY(pt.vel.y() + kParticleGravity * dt);
+        pt.pos += pt.vel * dt;
+    }
 }
 
 QPoint Creechr::carryAnchorScreen() const

@@ -133,6 +133,19 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     const QRect src = m_creechr->frameSrcRect();
     p.drawPixmap(dst, m_atlas->pixmap(), src);
 
+    // particles — drawn AFTER creechr so they pop in front. small
+    // 3x3 squares with alpha based on remaining lifetime.
+    for (const auto& pt : m_creechr->particles()) {
+        const double t = static_cast<double>(pt.ageMs) / qMax(1, pt.lifetimeMs);
+        const int alpha = static_cast<int>(255.0 * (1.0 - t));
+        QColor c = pt.color;
+        c.setAlpha(qBound(0, alpha, 255));
+        p.fillRect(QRect(static_cast<int>(pt.pos.x()) - widgetOrigin.x() - 1,
+                         static_cast<int>(pt.pos.y()) - widgetOrigin.y() - 1,
+                         3, 3),
+                   c);
+    }
+
     // carried/stashed bitmap, if there's an active heist with a pixmap.
     // when stashed it sits where it was dropped. while creechr is
     // carrying it, it's centered on his visible hands (carryAnchorScreen)

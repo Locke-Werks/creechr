@@ -7,12 +7,14 @@
 #include "creature/state_machine.h"
 #include "targets/target_provider.h"
 
+#include <QColor>
 #include <QPixmap>
 #include <QPoint>
 #include <QPointF>
 #include <QRect>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <optional>
 
 namespace cr {
@@ -21,6 +23,17 @@ class SpriteAtlas;
 struct WorldContext;
 class Hoard;
 class ExtensionTargetProvider;
+
+// tiny visual particle. lives a few hundred ms, fades by alpha based
+// on age/lifetime, gets drawn by OverlayWindow as a small filled rect.
+// no collision, no gravity (for now), pure visual flair.
+struct Particle {
+    QPointF pos;
+    QPointF vel;
+    int ageMs = 0;
+    int lifetimeMs = 400;
+    QColor color;
+};
 
 // everything about a heist in progress. zeroed out between heists.
 struct HeistContext {
@@ -109,6 +122,13 @@ public:
     void speakRandom(const QStringList& options, int durationMs = 1800);
     QString currentSpeech() const; // empty if no active speech
 
+    // particles. spawnPuff drops `count` short-lived particles at the
+    // given screen point with random outward velocity. tickParticles
+    // ages and culls them. overlay reads particles() and draws each.
+    void spawnPuff(QPointF where, int count, QColor color, int lifetimeMs = 450);
+    void tickParticles(int deltaMs);
+    const QVector<Particle>& particles() const { return m_particles; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -144,6 +164,7 @@ private:
     int m_rappelAnchorY = -1;
     QString m_speechText;
     qint64 m_speechExpiryMs = 0;
+    QVector<Particle> m_particles;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

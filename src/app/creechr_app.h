@@ -19,6 +19,7 @@ class WindowTargetProvider;
 class CursorTargetProvider;
 class UiaTargetProvider;
 class Hoard;
+class ExtensionPipeServer;
 }
 
 class CreechrApp : public QApplication
@@ -57,6 +58,7 @@ private:
     std::unique_ptr<cr::WindowTargetProvider> m_winTargets;
     std::unique_ptr<cr::CursorTargetProvider> m_curTargets;
     std::unique_ptr<cr::UiaTargetProvider> m_uiaTargets;
+    std::unique_ptr<cr::ExtensionPipeServer> m_extPipe;
     std::unique_ptr<cr::Hoard> m_hoard;
     qint64 m_lastHeistAttemptMs = 0;
     QTimer* m_tickTimer = nullptr;

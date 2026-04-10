@@ -21,7 +21,7 @@ if(POLICY CMP0091)
 endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 add_executable(creechr WIN32
     src/main.cpp
@@ -50,6 +50,8 @@ add_executable(creechr WIN32
     src/heist/hoard.cpp
     src/heist/bitmap_capture.h
     src/heist/bitmap_capture.cpp
+    src/ipc/extension_pipe_server.h
+    src/ipc/extension_pipe_server.cpp
     src/targets/target_provider.h
     src/targets/window_target_provider.h
     src/targets/window_target_provider.cpp
@@ -91,6 +93,7 @@ target_link_libraries(creechr PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Network
     dwmapi
     user32
     gdi32

@@ -6,6 +6,7 @@
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
 #include "heist/hoard.h"
+#include "ipc/extension_pipe_server.h"
 #include "targets/cursor_target_provider.h"
 #include "targets/uia_target_provider.h"
 #include "targets/window_target_provider.h"
@@ -70,6 +71,12 @@ void CreechrApp::start()
     m_winTargets = std::make_unique<cr::WindowTargetProvider>(m_windows.get());
     m_curTargets = std::make_unique<cr::CursorTargetProvider>();
     m_uiaTargets = std::make_unique<cr::UiaTargetProvider>();
+
+    m_extPipe = std::make_unique<cr::ExtensionPipeServer>(this);
+    if (!m_extPipe->start()) {
+        LOG_WARN(QStringLiteral("extension pipe server failed to start, "
+                                "browser theft will be unavailable"));
+    }
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;

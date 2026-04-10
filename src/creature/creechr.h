@@ -91,6 +91,15 @@ public:
     void setGnawTarget(int x, void* hwnd) { m_gnawTargetX = x; m_gnawHwnd = hwnd; }
     void clearGnawTarget() { m_gnawTargetX = -1; m_gnawHwnd = nullptr; }
 
+    // rappel anchor: the screen-space point where creechr's line is
+    // currently attached. set by ShootRappel, cleared when rappel
+    // states finish. overlay reads this to draw the visible line.
+    int rappelAnchorX() const { return m_rappelAnchorX; }
+    int rappelAnchorY() const { return m_rappelAnchorY; }
+    bool rappelActive() const { return m_rappelAnchorX >= 0 && m_rappelAnchorY >= 0; }
+    void setRappelAnchor(int x, int y) { m_rappelAnchorX = x; m_rappelAnchorY = y; }
+    void clearRappelAnchor() { m_rappelAnchorX = -1; m_rappelAnchorY = -1; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -122,6 +131,8 @@ private:
     int m_climbTargetY = -1;
     int m_gnawTargetX = -1;
     void* m_gnawHwnd = nullptr;
+    int m_rappelAnchorX = -1;
+    int m_rappelAnchorY = -1;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

@@ -108,6 +108,27 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     // primary), we need to subtract our own geometry().topLeft()
     // before passing to QPainter (which works in widget-local coords).
     const QPoint widgetOrigin = geometry().topLeft();
+
+    // rappel line, drawn UNDER creechr so it looks like the rope comes
+    // from inside his hands rather than over them
+    if (m_creechr->rappelActive()) {
+        const QPoint anchor(m_creechr->rappelAnchorX(), m_creechr->rappelAnchorY());
+        // line origin: top-center of creechr's sprite, where his hands
+        // are when reaching upward (matches climb_up / grab pose)
+        const QPoint hands(
+            static_cast<int>(m_creechr->position().x()) + 24,
+            static_cast<int>(m_creechr->position().y()) + 2
+        );
+        QPen pen(QColor(20, 0, 15, 230));
+        pen.setWidth(2);
+        p.setPen(pen);
+        p.drawLine(hands - widgetOrigin, anchor - widgetOrigin);
+        // small grappling-hook dot at the anchor
+        p.fillRect(QRect(anchor.x() - widgetOrigin.x() - 2,
+                         anchor.y() - widgetOrigin.y() - 2, 5, 5),
+                   QColor(20, 0, 15));
+    }
+
     const QRect dst = m_creechr->drawRect().translated(-widgetOrigin);
     const QRect src = m_creechr->frameSrcRect();
     p.drawPixmap(dst, m_atlas->pixmap(), src);

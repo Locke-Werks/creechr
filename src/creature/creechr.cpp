@@ -197,11 +197,17 @@ public:
                 }
             }
             if (pos.x() < leftLimit || pos.x() > rightLimit) {
-                // walked off the edge of the window — climb down
+                // walked off the edge — go down. 40% chance he rappels
+                // down dramatically instead of climbing the wall.
                 pos.setX(qBound<qreal>(leftLimit, pos.x(), rightLimit));
                 c.setPosition(pos);
-                c.setClimbTarget(static_cast<int>(pos.x()),
-                                 world.virtualDesktop.bottom() - kSpriteHeight);
+                const int floorBottom = world.virtualDesktop.bottom() - kSpriteHeight;
+                if (QRandomGenerator::global()->bounded(10) < 4) {
+                    c.setRappelAnchor(static_cast<int>(pos.x()),
+                                      world.virtualDesktop.bottom());
+                    return QStringLiteral("rappel_descend");
+                }
+                c.setClimbTarget(static_cast<int>(pos.x()), floorBottom);
                 return QStringLiteral("climb_down");
             }
         }
@@ -214,6 +220,33 @@ public:
                 LOG_DEBUG(QStringLiteral("walk: climb attempt but no windows"));
                 m_climbCooldown = 1000;
             } else {
+                // first: try to find a RAPPEL target — a window whose
+                // x-range contains creechr's current x and whose top is
+                // well above his current floor. if found, ~40% chance
+                // we rappel up to it instead of doing the regular pick.
+                static const bool kForceRappel = !qgetenv("CREECHR_RAPPEL_NOW").isEmpty();
+                {
+                    int bestIdx = -1;
+                    int bestTop = INT_MAX;
+                    for (int i = 0; i < world.windowRects.size(); ++i) {
+                        const QRect& w = world.windowRects[i];
+                        if (w.height() < 64 || w.width() < 64) continue;
+                        if (pos.x() < w.left() || pos.x() > w.right()) continue;
+                        if (w.top() >= c.floorY() - 80) continue; // not high enough to be interesting
+                        if (w.top() < bestTop) {
+                            bestTop = w.top();
+                            bestIdx = i;
+                        }
+                    }
+                    if (bestIdx >= 0
+                        && (kForceRappel || QRandomGenerator::global()->bounded(10) < 4)) {
+                        const QRect& w = world.windowRects[bestIdx];
+                        c.setRappelAnchor(static_cast<int>(pos.x()), w.top());
+                        LOG_DEBUG(QStringLiteral("walk: rappel target window %1 top=%2 (creechr y=%3)")
+                            .arg(bestIdx).arg(w.top()).arg(c.floorY()));
+                        return QStringLiteral("shoot_rappel");
+                    }
+                }
                 // pick a random window. require some minimum size.
                 const int idx = QRandomGenerator::global()->bounded(world.windowRects.size());
                 const QRect& w = world.windowRects[idx];
@@ -385,6 +418,113 @@ public:
             c.setPosition(pos);
             c.setFloorY(c.climbTargetY());
             c.clearClimbTarget();
+            return QStringLiteral("walk");
+        }
+        c.setPosition(pos);
+        return {};
+    }
+};
+
+// === rappel states ===
+//
+// shoot_rappel: brief windup. plays the grab anim (arms reach up) for
+//   ~300ms, sets a rappel anchor on creechr at the target point, then
+//   transitions into rappel_climb or rappel_descend depending on which
+//   direction the anchor is.
+//
+// rappel_climb: vertical climb up the line at 200 px/sec. anim is
+//   climb_up (arms scissoring upward). when feet reach the anchor's y,
+//   he's on top of the target window. clear rappel, set new floorY,
+//   transition to walk.
+//
+// rappel_descend: vertical descent at 240 px/sec. anim is climb_down.
+//   when he hits the floor (or another platform), clear rappel,
+//   transition to walk.
+//
+// the visible rope is drawn by OverlayWindow, which checks
+// creechr.rappelActive() and reads creechr.rappelAnchorX/Y.
+
+class ShootRappelState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("shoot_rappel"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, 0 });
+        c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+        m_phaseMs = 0;
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    {
+        m_phaseMs += deltaMs;
+        if (m_phaseMs > 350) {
+            // direction: anchor above us = climb, anchor below = descend
+            if (c.rappelAnchorY() < c.position().y()) {
+                return QStringLiteral("rappel_climb");
+            } else {
+                return QStringLiteral("rappel_descend");
+            }
+        }
+        return {};
+    }
+
+private:
+    int m_phaseMs = 0;
+};
+
+class RappelClimbState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("rappel_climb"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, -200 });
+        c.animator().setAnimation(QStringLiteral("climb_up"));
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    {
+        const double dt = deltaMs / 1000.0;
+        QPointF pos = c.position() + c.velocity() * dt;
+        // creechr's "feet" land at anchorY - kSpriteHeight (so his
+        // foot y = anchorY which is the platform top)
+        const int targetTopLeftY = c.rappelAnchorY() - kSpriteHeight;
+        if (pos.y() <= targetTopLeftY) {
+            pos.setY(targetTopLeftY);
+            c.setPosition(pos);
+            c.setFloorY(targetTopLeftY);
+            c.clearRappelAnchor();
+            return QStringLiteral("walk");
+        }
+        c.setPosition(pos);
+        return {};
+    }
+};
+
+class RappelDescendState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("rappel_descend"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, 240 });
+        c.animator().setAnimation(QStringLiteral("climb_down"));
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    {
+        const double dt = deltaMs / 1000.0;
+        QPointF pos = c.position() + c.velocity() * dt;
+        const int targetTopLeftY = c.rappelAnchorY() - kSpriteHeight;
+        if (pos.y() >= targetTopLeftY) {
+            pos.setY(targetTopLeftY);
+            c.setPosition(pos);
+            c.setFloorY(targetTopLeftY);
+            c.clearRappelAnchor();
             return QStringLiteral("walk");
         }
         c.setPosition(pos);
@@ -1126,6 +1266,9 @@ Creechr::Creechr(const SpriteAtlas& atlas)
     m_states.registerState(std::make_unique<ApproachGnawState>());
     m_states.registerState(std::make_unique<GnawState>());
     m_states.registerState(std::make_unique<FlungState>());
+    m_states.registerState(std::make_unique<ShootRappelState>());
+    m_states.registerState(std::make_unique<RappelClimbState>());
+    m_states.registerState(std::make_unique<RappelDescendState>());
     m_states.registerState(std::make_unique<SleepState>());
     m_states.registerState(std::make_unique<WakeState>());
     m_states.registerState(std::make_unique<HeistApproachState>());

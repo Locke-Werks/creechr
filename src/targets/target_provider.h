@@ -26,6 +26,10 @@ enum class TargetKind {
     DomElement,
 };
 
+// for non-window targets that need an opaque string id (dom targets
+// use this — the extension assigns "creechr-N" identifiers per scan).
+// window heists ignore it; uia/cursor heists ignore it.
+
 // abstract description of any heist target. concrete providers populate
 // the relevant subset of fields. the heist state machine reads these and
 // figures out what to do — for kind=Window it'll capture the hwnd; for
@@ -34,6 +38,7 @@ struct HeistTarget {
     TargetKind kind = TargetKind::Window;
     QRect screenRect;          // where the target lives, in logical px
     CrHwnd hwnd = nullptr;     // for Window targets
+    QString opaqueId;          // for DomElement targets ("creechr-N")
     QString label;             // human readable, for logging
 };
 

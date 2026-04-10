@@ -253,6 +253,9 @@ void SpriteAtlas::makePlaceholder()
 {
     // 8 columns × 12 rows of 48px cells. one row per animation.
     // 384 × 576 atlas. transparent background, draw in.
+    // (smoothness pass bumped most cycles up — walks went from 6 frames
+    // to 8, climbs/grab/bite/carry from 4 to 6. idle gained a 2-frame
+    // breathing bob so he doesnt look like a corpse standing there.)
     constexpr int kCols = 8;
     constexpr int kRows = 12;
     m_pixmap = QPixmap(kCols * kCellW, kRows * kCellH);
@@ -266,96 +269,109 @@ void SpriteAtlas::makePlaceholder()
     };
 
     // ----- row 0: idle -----
-    // single relaxed pose. arms at sides, legs straight, mouth closed.
-    {
+    // 2-frame breathing bob so he visibly inhales / exhales standing there
+    for (int i = 0; i < 2; ++i) {
         CreechrPose pose;
-        drawCreechr(p, cellRect(0, 0), pose);
+        pose.bodyBob = (i == 0) ? 0 : -1;
+        drawCreechr(p, cellRect(i, 0), pose);
     }
 
-    // ----- row 1: walk_right -----
-    // 6-frame leg + arm cycle. arms swing opposite of legs.
-    // poses: contact-L, passing-L, recoil-L, contact-R, passing-R, recoil-R
+    // ----- row 1/2: walk_right / walk_left -----
+    // 8-frame cycle. arms swing opposite of legs. each frame is a
+    // smaller delta than the v0.1 6-frame cycle so the motion reads
+    // smoother instead of in big strides.
+    // phases: contact, down, passing, high, contact (other foot), ...
     auto walkPose = [](int frame, bool right) {
         CreechrPose pose;
         pose.facingRight = right;
-        // mirror leg/arm dx for left-facing
         const int sign = right ? 1 : -1;
-        switch (frame) {
-        case 0: // left foot contact, right arm forward
-            pose.leftLeg  = { -3 * sign, 0 };
-            pose.rightLeg = {  3 * sign, 0 };
-            pose.leftArm  = {  4 * sign, 4 };
-            pose.rightArm = { -3 * sign, 4 };
-            pose.bodyBob = 0;
-            break;
-        case 1: // passing
-            pose.leftLeg  = { 0, -1 };
-            pose.rightLeg = { 0,  0 };
-            pose.leftArm  = { 2 * sign, 5 };
-            pose.rightArm = {-2 * sign, 5 };
-            pose.bodyBob = -1;
-            break;
-        case 2: // left foot recoil
-            pose.leftLeg  = {  3 * sign, 0 };
-            pose.rightLeg = { -3 * sign, 0 };
-            pose.leftArm  = { -3 * sign, 4 };
-            pose.rightArm = {  4 * sign, 4 };
-            pose.bodyBob = 0;
-            break;
-        case 3: // right foot contact, left arm forward
-            pose.leftLeg  = {  3 * sign, 0 };
-            pose.rightLeg = { -3 * sign, 0 };
-            pose.leftArm  = { -3 * sign, 4 };
-            pose.rightArm = {  4 * sign, 4 };
-            pose.bodyBob = 0;
-            break;
-        case 4: // passing
-            pose.leftLeg  = { 0,  0 };
-            pose.rightLeg = { 0, -1 };
-            pose.leftArm  = {-2 * sign, 5 };
-            pose.rightArm = { 2 * sign, 5 };
-            pose.bodyBob = -1;
-            break;
-        case 5: // right foot recoil
-            pose.leftLeg  = { -3 * sign, 0 };
-            pose.rightLeg = {  3 * sign, 0 };
-            pose.leftArm  = {  4 * sign, 4 };
-            pose.rightArm = { -3 * sign, 4 };
-            pose.bodyBob = 0;
-            break;
+        // table of (left foot dx, right foot dx, body bob, swing sign)
+        // swing sign: +1 = left arm fwd, -1 = right arm fwd
+        struct F { int lf; int rf; int bob; int swing; };
+        static const F frames[8] = {
+            { -4 * 1,  3 * 1, 0, -1 }, // L contact, R back   — right arm fwd
+            { -2 * 1,  2 * 1, 0, -1 }, // L mid,     R lifting
+            {  0,      0,     -1, 0 }, // passing                — neutral
+            {  2 * 1, -2 * 1, 0, +1 }, // L back, R mid forward — left arm fwd
+            {  3 * 1, -4 * 1, 0, +1 }, // R contact, L back
+            {  2 * 1, -2 * 1, 0, +1 }, // R mid
+            {  0,      0,     -1, 0 }, // passing
+            { -2 * 1,  2 * 1, 0, -1 }, // R back, L mid forward
+        };
+        const F& f = frames[frame];
+        pose.leftLeg  = { f.lf * sign, 0 };
+        pose.rightLeg = { f.rf * sign, 0 };
+        pose.bodyBob  = f.bob;
+        // arm swing: 4px forward, 3px back, scaled by sign so it
+        // mirrors with facing
+        const int fwd  =  4 * sign;
+        const int back = -3 * sign;
+        if (f.swing > 0) {       // left arm fwd, right arm back
+            pose.leftArm  = { fwd,  4 };
+            pose.rightArm = { back, 4 };
+        } else if (f.swing < 0) { // right arm fwd, left arm back
+            pose.leftArm  = { back, 4 };
+            pose.rightArm = { fwd,  4 };
+        } else {                  // passing — arms near sides
+            pose.leftArm  = {  1 * sign, 5 };
+            pose.rightArm = { -1 * sign, 5 };
         }
         return pose;
     };
 
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 8; ++i) {
         drawCreechr(p, cellRect(i, 1), walkPose(i, true));
     }
-    // ----- row 2: walk_left -----
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 8; ++i) {
         drawCreechr(p, cellRect(i, 2), walkPose(i, false));
     }
 
-    // ----- row 3: climb_up -----
-    // arms reach up, legs scissor. 4 frames.
-    for (int i = 0; i < 4; ++i) {
+    // ----- row 3: climb_up (6 frames) -----
+    // alternating reach pattern: left arm up + right leg up, then swap.
+    // 6 frames smooths the transition into 3 sub-poses per side.
+    for (int i = 0; i < 6; ++i) {
         CreechrPose pose;
         pose.facingRight = true;
-        pose.bodyBob = (i % 2 == 0) ? 0 : -1;
-        pose.leftArm  = (i < 2) ? armUp() : ArmPose{ -1,  3 };
-        pose.rightArm = (i < 2) ? ArmPose{ 1, 3 } : armUp();
-        pose.leftLeg  = (i < 2) ? LegPose{ 0, -2 } : LegPose{ -2,  0 };
-        pose.rightLeg = (i < 2) ? LegPose{ -2, 0 } : LegPose{  0, -2 };
+        const int phase = i % 6;
+        // phase 0..2: left side reaching up
+        // phase 3..5: right side reaching up
+        const bool leftSide = (phase < 3);
+        const int sub = phase % 3; // 0 reach, 1 mid, 2 about-to-swap
+        pose.bodyBob = (sub == 1) ? -1 : 0;
+        if (leftSide) {
+            pose.leftArm  = { 0, -7 + sub };
+            pose.rightArm = { 1,  3 - sub };
+            pose.leftLeg  = { 0,  0 };
+            pose.rightLeg = { -2 + sub, -2 };
+        } else {
+            pose.leftArm  = { 1,  3 - sub };
+            pose.rightArm = { 0, -7 + sub };
+            pose.leftLeg  = { -2 + sub, -2 };
+            pose.rightLeg = { 0, 0 };
+        }
         drawCreechr(p, cellRect(i, 3), pose);
     }
-    // ----- row 4: climb_down -----
-    for (int i = 0; i < 4; ++i) {
+    // ----- row 4: climb_down (6 frames) -----
+    // mirror of climb_up but with arms reaching DOWN (still pulling on
+    // the wall but in the opposite direction)
+    for (int i = 0; i < 6; ++i) {
         CreechrPose pose;
         pose.facingRight = true;
-        pose.bodyBob = (i % 2 == 0) ? 0 : 1;
-        pose.leftArm  = (i < 2) ? ArmPose{ -1,  4 } : ArmPose{  1,  4 };
-        pose.rightArm = (i < 2) ? ArmPose{  1,  4 } : ArmPose{ -1,  4 };
-        pose.leftLeg  = (i < 2) ? LegPose{ -2, 1 } : LegPose{  1,  1 };
-        pose.rightLeg = (i < 2) ? LegPose{  1, 1 } : LegPose{ -2,  1 };
+        const int phase = i % 6;
+        const bool leftSide = (phase < 3);
+        const int sub = phase % 3;
+        pose.bodyBob = (sub == 1) ? 1 : 0;
+        if (leftSide) {
+            pose.leftArm  = { -1, 6 - sub };
+            pose.rightArm = {  1, 4 + sub };
+            pose.leftLeg  = {  0, 1 };
+            pose.rightLeg = { -1 + sub, 1 };
+        } else {
+            pose.leftArm  = {  1, 4 + sub };
+            pose.rightArm = { -1, 6 - sub };
+            pose.leftLeg  = { -1 + sub, 1 };
+            pose.rightLeg = {  0, 1 };
+        }
         drawCreechr(p, cellRect(i, 4), pose);
     }
 
@@ -392,28 +408,40 @@ void SpriteAtlas::makePlaceholder()
         drawCreechr(p, cellRect(i, 7), pose);
     }
 
-    // ----- row 8: grab -----
-    // 4 frames: arms windup → arms forward + mouth opens → arms forward + mouth wider
-    for (int i = 0; i < 4; ++i) {
+    // ----- row 8: grab (6 frames) -----
+    // wind-up → cock → thrust mid → thrust full + mouth opens → mouth wide → hold
+    for (int i = 0; i < 6; ++i) {
         CreechrPose pose;
         pose.facingRight = true;
         switch (i) {
-        case 0: // anticipation: arms back, mouth tightening
+        case 0: // anticipation: arms slightly back, mouth tightening
+            pose.leftArm  = { -2, 4 };
+            pose.rightArm = { -2, 4 };
+            pose.mouth    = MouthState::Closed;
+            pose.bodyBob  = 1;
+            break;
+        case 1: // deeper windup
             pose.leftArm  = armSwingBack();
             pose.rightArm = armSwingBack();
             pose.mouth    = MouthState::Closed;
+            pose.bodyBob  = 1;
             break;
-        case 1: // arms thrust forward, mouth opens small
-            pose.leftArm  = { 6, 1 };
-            pose.rightArm = { 6, 1 };
+        case 2: // start thrust forward, mouth opens small
+            pose.leftArm  = { 4, 2 };
+            pose.rightArm = { 4, 2 };
             pose.mouth    = MouthState::OpenSmall;
             break;
-        case 2: // arms fully extended, mouth wide
+        case 3: // arms most of the way out
+            pose.leftArm  = { 7, 1 };
+            pose.rightArm = { 7, 1 };
+            pose.mouth    = MouthState::OpenSmall;
+            break;
+        case 4: // fully extended, mouth WIDE
             pose.leftArm  = armReachFwd();
             pose.rightArm = armReachFwd();
             pose.mouth    = MouthState::OpenWide;
             break;
-        case 3: // hold: mouth closed on the thing, arms still forward
+        case 5: // hold the catch
             pose.leftArm  = armReachFwd();
             pose.rightArm = armReachFwd();
             pose.mouth    = MouthState::Closed;
@@ -422,36 +450,45 @@ void SpriteAtlas::makePlaceholder()
         drawCreechr(p, cellRect(i, 8), pose);
     }
 
-    // ----- row 9: bite -----
-    // 4 frames: closed → wide → closed → wide. quick chomping loop.
-    for (int i = 0; i < 4; ++i) {
+    // ----- row 9: bite (6 frames) -----
+    // closed → wide → closed → wide → closed → wide. faster chomp with
+    // a body bob each cycle so the bite reads more aggressive.
+    for (int i = 0; i < 6; ++i) {
         CreechrPose pose;
         pose.facingRight = true;
         pose.leftArm  = armReachFwd();
         pose.rightArm = armReachFwd();
-        pose.mouth    = (i % 2 == 0) ? MouthState::OpenWide : MouthState::Closed;
-        pose.bodyBob  = (i % 2 == 0) ? 0 : -1;
+        const bool open = (i % 2 == 0);
+        pose.mouth   = open ? MouthState::OpenWide : MouthState::Closed;
+        pose.bodyBob = open ? 0 : -1;
         drawCreechr(p, cellRect(i, 9), pose);
     }
 
-    // ----- row 10: carry_right -----
-    // 4-frame walk cycle but with arms held forward (carrying)
-    for (int i = 0; i < 4; ++i) {
-        CreechrPose pose = walkPose(i < 2 ? i : i + 2, true); // skip middle frames
-        pose.leftArm  = armCarry();
-        pose.rightArm = armCarry();
-        pose.mouth    = MouthState::Closed;
-        drawCreechr(p, cellRect(i, 10), pose);
+    // ----- row 10: carry_right (6 frames) -----
+    // 6-frame walk cycle (subset of row 1) but arms held forward.
+    // sample frames 0, 2, 3, 4, 5, 7 of the 8-frame walk for variety.
+    {
+        const int picks[6] = { 0, 2, 3, 4, 5, 7 };
+        for (int i = 0; i < 6; ++i) {
+            CreechrPose pose = walkPose(picks[i], true);
+            pose.leftArm  = armCarry();
+            pose.rightArm = armCarry();
+            pose.mouth    = MouthState::Closed;
+            drawCreechr(p, cellRect(i, 10), pose);
+        }
     }
-    // ----- row 11: carry_left -----
-    for (int i = 0; i < 4; ++i) {
-        CreechrPose pose = walkPose(i < 2 ? i : i + 2, false);
-        // arms come forward in his FACING direction. for carry_left
-        // that means dx is negative.
-        pose.leftArm  = { -8, 3 };
-        pose.rightArm = { -8, 3 };
-        pose.mouth    = MouthState::Closed;
-        drawCreechr(p, cellRect(i, 11), pose);
+    // ----- row 11: carry_left (6 frames) -----
+    {
+        const int picks[6] = { 0, 2, 3, 4, 5, 7 };
+        for (int i = 0; i < 6; ++i) {
+            CreechrPose pose = walkPose(picks[i], false);
+            // arms come forward in his FACING direction. for carry_left
+            // that means dx is negative.
+            pose.leftArm  = { -8, 3 };
+            pose.rightArm = { -8, 3 };
+            pose.mouth    = MouthState::Closed;
+            drawCreechr(p, cellRect(i, 11), pose);
+        }
     }
 
     p.end();
@@ -469,18 +506,18 @@ void SpriteAtlas::makePlaceholder()
         m_anims.insert(name, a);
     };
 
-    add("idle",       { {0,0} },                                 1000, true);
-    add("walk_right", { {0,1}, {1,1}, {2,1}, {3,1}, {4,1}, {5,1} },110, true);
-    add("walk_left",  { {0,2}, {1,2}, {2,2}, {3,2}, {4,2}, {5,2} },110, true);
-    add("climb_up",   { {0,3}, {1,3}, {2,3}, {3,3} },             140, true);
-    add("climb_down", { {0,4}, {1,4}, {2,4}, {3,4} },             140, true);
-    add("hang",       { {0,5} },                                 1000, true);
-    add("sleep",      { {0,6} },                                 1000, true);
-    add("wake",       { {0,7}, {1,7}, {2,7} },                    180, false);
-    add("grab",       { {0,8}, {1,8}, {2,8}, {3,8} },              90, false);
-    add("bite",       { {0,9}, {1,9}, {2,9}, {3,9} },              80, true);
-    add("carry_right",{ {0,10},{1,10},{2,10},{3,10} },            130, true);
-    add("carry_left", { {0,11},{1,11},{2,11},{3,11} },            130, true);
+    add("idle",       { {0,0}, {1,0} },                          900, true);
+    add("walk_right", { {0,1},{1,1},{2,1},{3,1},{4,1},{5,1},{6,1},{7,1} }, 80, true);
+    add("walk_left",  { {0,2},{1,2},{2,2},{3,2},{4,2},{5,2},{6,2},{7,2} }, 80, true);
+    add("climb_up",   { {0,3},{1,3},{2,3},{3,3},{4,3},{5,3} },   110, true);
+    add("climb_down", { {0,4},{1,4},{2,4},{3,4},{4,4},{5,4} },   110, true);
+    add("hang",       { {0,5} },                                1000, true);
+    add("sleep",      { {0,6} },                                1000, true);
+    add("wake",       { {0,7},{1,7},{2,7} },                     180, false);
+    add("grab",       { {0,8},{1,8},{2,8},{3,8},{4,8},{5,8} },    75, false);
+    add("bite",       { {0,9},{1,9},{2,9},{3,9},{4,9},{5,9} },    70, true);
+    add("carry_right",{ {0,10},{1,10},{2,10},{3,10},{4,10},{5,10} },95, true);
+    add("carry_left", { {0,11},{1,11},{2,11},{3,11},{4,11},{5,11} },95, true);
 
     LOG_INFO(QStringLiteral("sprite_atlas: placeholder atlas built (%1 anims, %2x%3 cells)")
         .arg(m_anims.size()).arg(kCellW).arg(kCellH));

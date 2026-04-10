@@ -84,19 +84,21 @@ void CreechrApp::start()
     m_tray = std::make_unique<TrayIcon>(this);
     m_tray->show();
 
-    // logic at 10Hz, render at 30Hz. spec §4.2.
-    m_logicTimer = new QTimer(this);
-    m_logicTimer->setInterval(100);
-    connect(m_logicTimer, &QTimer::timeout, this, &CreechrApp::onLogicTick);
-    m_logicTimer->start();
+    // unified ~60Hz tick. v0.1 had logic at 10Hz and render at 30Hz, on
+    // separate timers. that meant between two consecutive renders the
+    // position usually hadn't moved, so creechr looked like he was
+    // hopping in 6-pixel steps. one timer at 60Hz, physics integrates
+    // every render, problem solved. EnumWindows / fullscreen check are
+    // rate-limited inside the tick to ~10Hz so we don't burn cpu on the
+    // expensive stuff at 60Hz.
+    m_tickTimer = new QTimer(this);
+    m_tickTimer->setInterval(16);
+    m_tickTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_tickTimer, &QTimer::timeout, this, &CreechrApp::onTick);
+    m_tickTimer->start();
 
-    m_renderTimer = new QTimer(this);
-    m_renderTimer->setInterval(33);
-    connect(m_renderTimer, &QTimer::timeout, this, &CreechrApp::onRenderTick);
-    m_renderTimer->start();
-
-    m_lastLogicMs  = QDateTime::currentMSecsSinceEpoch();
-    m_lastRenderMs = m_lastLogicMs;
+    m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
+    m_lastWorldRefreshMs = 0;
 
     // dev convenience: if CREECHR_TEST_EXIT_MS is set in the env, schedule
     // a quit after that many ms. this is so the build/test loop can run
@@ -121,17 +123,12 @@ void CreechrApp::setPaused(bool paused)
     // spec §4.8 says pause stops the timers, not just no-ops them.
     // honoring that. resume restarts them with fresh timestamps so
     // the next dt isn't "however many seconds you were paused for".
-    if (m_logicTimer) {
-        if (paused) m_logicTimer->stop();
-        else        m_logicTimer->start();
-    }
-    if (m_renderTimer) {
-        if (paused) m_renderTimer->stop();
-        else        m_renderTimer->start();
+    if (m_tickTimer) {
+        if (paused) m_tickTimer->stop();
+        else        m_tickTimer->start();
     }
     if (!paused) {
-        m_lastLogicMs  = QDateTime::currentMSecsSinceEpoch();
-        m_lastRenderMs = m_lastLogicMs;
+        m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     }
     LOG_INFO(paused ? QStringLiteral("paused") : QStringLiteral("resumed"));
     emit pauseChanged(m_paused);
@@ -149,37 +146,42 @@ void CreechrApp::quitGracefully()
 // v0.2 uses GetLastInputInfo via cr::win32::millisSinceLastInput() so
 // keyboard activity counts too. v0.1 used a hand-rolled cursor tracker
 // that ignored typing — embarrassing in retrospect.
+namespace {
+cr::WorldContext g_cachedWorld;
+} // namespace
 
-void CreechrApp::onLogicTick()
+void CreechrApp::onTick()
 {
-    if (m_paused || !m_creechr) {
+    if (m_paused || !m_creechr || !m_overlay) {
         return;
     }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    int dt = static_cast<int>(now - m_lastLogicMs);
-    m_lastLogicMs = now;
+    int dt = static_cast<int>(now - m_lastTickMs);
+    m_lastTickMs = now;
     if (dt < 0)   dt = 0;
     if (dt > 500) dt = 500; // dont let a long pause snap-translate him
 
-    cr::WorldContext world;
-    QRect db;
-    for (QScreen* s : QGuiApplication::screens()) {
-        db = db.united(s->geometry());
+    // expensive world refreshes (EnumWindows, fullscreen state, screen
+    // geometry recalc) are rate-limited to ~10Hz inside this 60Hz tick
+    // because none of them change fast enough to be worth running every
+    // frame.
+    if (now - m_lastWorldRefreshMs >= 100) {
+        m_lastWorldRefreshMs = now;
+        QRect db;
+        for (QScreen* s : QGuiApplication::screens()) {
+            db = db.united(s->geometry());
+        }
+        g_cachedWorld.virtualDesktop = db;
+        if (m_windows)    g_cachedWorld.windowRects     = m_windows->snapshotRects();
+        if (m_fullscreen) g_cachedWorld.fullscreenActive = m_fullscreen->isFullscreenActive();
     }
-    world.virtualDesktop = db;
-    world.cursorPos = QCursor::pos();
-    world.msSinceLastInput = cr::win32::millisSinceLastInput();
-    if (m_windows) {
-        world.windowRects = m_windows->snapshotRects();
-    }
-    if (m_fullscreen) {
-        world.fullscreenActive = m_fullscreen->isFullscreenActive();
-    }
+    // cheap stuff every tick
+    g_cachedWorld.cursorPos = QCursor::pos();
+    g_cachedWorld.msSinceLastInput = cr::win32::millisSinceLastInput();
 
     // hide the overlay when a fullscreen game/presentation is going.
-    // we'll show it again when the user comes back.
     if (m_overlay) {
-        const bool wantVisible = !world.fullscreenActive;
+        const bool wantVisible = !g_cachedWorld.fullscreenActive;
         if (wantVisible != m_overlay->isVisible()) {
             if (wantVisible) {
                 m_overlay->show();
@@ -190,48 +192,54 @@ void CreechrApp::onLogicTick()
         }
     }
 
-    // heist orchestration: every ~3 minutes (poisson-ish), if creechr
-    // doesn't have a pending heist and the user has been idle for >5s,
-    // pick a random target and stash it on creechr. the IdleState will
-    // see it on the next tick and start the heist sequence.
+    // heist orchestration. constants are tuned for 60Hz ticks now:
+    //   - bounded(900) at 60Hz = ~1 attempt per 15 seconds on average
+    //   - 8s hard cooldown still applies
+    //   - input-idle gate dropped from 5s to 2.5s so casual breaks count
+    // when an attempt fires the random gate but no target is found we
+    // log it at info so the user can see *why* nothing visible happened.
+    //
+    // dev override: CREECHR_HEIST_NOW=1 in the env removes the random
+    // gate and the input idle gate so heists fire as fast as the 8s
+    // cooldown allows. for "show me it works" runs.
+    static const bool kForceHeist = !qgetenv("CREECHR_HEIST_NOW").isEmpty();
     const qint64 sinceLastAttempt = now - m_lastHeistAttemptMs;
+    const bool inputGateOk = kForceHeist || g_cachedWorld.msSinceLastInput >= 2500;
+    const bool randomGateOk = kForceHeist
+        ? (sinceLastAttempt > 2000)
+        : (QRandomGenerator::global()->bounded(900) == 0);
     if (m_creechr && !m_creechr->heist()
-        && world.msSinceLastInput >= 5000
-        && sinceLastAttempt > 8000   // hard floor: at least 8s between attempts
-        && QRandomGenerator::global()->bounded(600) == 0 /* ~1/min at 10Hz */) {
+        && inputGateOk
+        && sinceLastAttempt > 2000
+        && randomGateOk) {
         m_lastHeistAttemptMs = now;
-        // 50% window, 30% uia, 20% cursor. uia + window can fail to find
-        // a target so cursor is the always-available fallback.
         const int roll = QRandomGenerator::global()->bounded(10);
         std::optional<cr::HeistTarget> target;
+        const char* whichRoll = "?";
         if (roll < 5 && m_winTargets) {
-            target = m_winTargets->pickRandom(world.virtualDesktop);
+            whichRoll = "window";
+            target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
         } else if (roll < 8 && m_uiaTargets) {
-            target = m_uiaTargets->pickRandom(world.virtualDesktop);
+            whichRoll = "uia";
+            target = m_uiaTargets->pickRandom(g_cachedWorld.virtualDesktop);
+        } else {
+            whichRoll = "cursor";
         }
         if (!target.has_value() && m_curTargets) {
             target = m_curTargets->current();
         }
         if (target.has_value()) {
-            LOG_INFO(QStringLiteral("orchestrator: starting heist on %1").arg(target->label));
+            LOG_INFO(QStringLiteral("orchestrator: heist start (%1) -> %2")
+                .arg(whichRoll).arg(target->label));
             m_creechr->beginHeist(*target);
+        } else {
+            LOG_INFO(QStringLiteral("orchestrator: %1 attempt found no target").arg(whichRoll));
         }
     }
 
-    m_creechr->tickLogic(dt, world);
-}
-
-void CreechrApp::onRenderTick()
-{
-    if (m_paused || !m_creechr || !m_overlay) {
-        return;
-    }
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    int dt = static_cast<int>(now - m_lastRenderMs);
-    m_lastRenderMs = now;
-    if (dt < 0)   dt = 0;
-    if (dt > 500) dt = 500;
-
+    // physics + animator + render — all every tick now so movement is
+    // visibly continuous instead of hopping in 100ms chunks.
+    m_creechr->tickLogic(dt, g_cachedWorld);
     m_creechr->tickRender(dt);
     m_overlay->update();
 }

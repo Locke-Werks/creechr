@@ -45,8 +45,7 @@ signals:
     void pauseChanged(bool paused);
 
 private slots:
-    void onLogicTick();
-    void onRenderTick();
+    void onTick();
 
 private:
     std::unique_ptr<TrayIcon> m_tray;
@@ -60,9 +59,8 @@ private:
     std::unique_ptr<cr::UiaTargetProvider> m_uiaTargets;
     std::unique_ptr<cr::Hoard> m_hoard;
     qint64 m_lastHeistAttemptMs = 0;
-    QTimer* m_logicTimer = nullptr;
-    QTimer* m_renderTimer = nullptr;
-    qint64 m_lastLogicMs = 0;
-    qint64 m_lastRenderMs = 0;
+    QTimer* m_tickTimer = nullptr;
+    qint64 m_lastTickMs = 0;
+    qint64 m_lastWorldRefreshMs = 0;
     bool m_paused = false;
 };

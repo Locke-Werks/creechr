@@ -39,20 +39,18 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
+        // pending heist takes priority over EVERYTHING else, including
+        // sleep. otherwise the orchestrator can queue a heist and
+        // creechr will just nap on top of it.
+        if (c.heist() && !c.heist()->grabbed) {
+            return QStringLiteral("heist_approach");
+        }
         if (world.msSinceLastInput > 30000) {
             return QStringLiteral("sleep");
         }
         m_remaining -= deltaMs;
         if (m_remaining > 0) {
             return {};
-        }
-
-        // small chance of starting a heist instead of just going for a
-        // walk. heist gating: must be on the floor, must have a pending
-        // target stashed on creechr (orchestrator put it there), must
-        // not have user-input within the last 5 seconds.
-        if (c.heist() && !c.heist()->grabbed && world.msSinceLastInput >= 5000) {
-            return QStringLiteral("heist_approach");
         }
         return QStringLiteral("walk");
     }
@@ -79,14 +77,19 @@ public:
         c.animator().setAnimation(c.facingRight() ? QStringLiteral("walk_right")
                                                    : QStringLiteral("walk_left"));
         // walk for 2-6 seconds before getting bored
-        m_remaining = 2000 + QRandomGenerator::global()->bounded(4000);
+        // walk for 6-14 seconds before getting bored. v0.1 had 2-6s
+        // which meant he was constantly switching states and the user
+        // mostly saw him standing still. longer walks → he actually
+        // crosses the screen.
+        m_remaining = 6000 + QRandomGenerator::global()->bounded(8000);
         // snap y to whatever platform we're on. don't re-park to floor
         // — that breaks walking on top of windows.
         c.setPosition({ c.position().x(), static_cast<double>(c.floorY()) });
-        // first climb attempt within ~500-1500ms of walking. resetting
-        // every walk enter is fine — it just means he'll think about
-        // climbing soon after each idle break, which is what we want.
-        m_climbCooldown = 500 + QRandomGenerator::global()->bounded(1000);
+        // first climb attempt 4-10s into the walk. v0.1 had 0.5-1.5s
+        // which combined with always-pick-nearest-edge meant he was
+        // climbing the same maximized window's left edge over and over
+        // and never actually walked anywhere.
+        m_climbCooldown = 4000 + QRandomGenerator::global()->bounded(6000);
     }
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
@@ -153,12 +156,22 @@ public:
                 const int idx = QRandomGenerator::global()->bounded(world.windowRects.size());
                 const QRect& w = world.windowRects[idx];
                 if (w.height() >= 64 && w.width() >= 64) {
+                    // pick edge: 60% chance the FARTHER edge so he
+                    // actually traverses the screen, 40% nearer.
+                    // (v0.1 always picked nearer, which meant he camped
+                    // on the left edge of the maximized window forever.)
                     const int leftDist  = qAbs(static_cast<int>(pos.x()) - w.left());
                     const int rightDist = qAbs(static_cast<int>(pos.x()) - w.right());
-                    const int targetX = (leftDist <= rightDist) ? w.left() : w.right() - kSpriteWidth;
+                    const bool preferFar = QRandomGenerator::global()->bounded(10) < 6;
+                    const bool useLeft = preferFar
+                        ? (leftDist >  rightDist)
+                        : (leftDist <= rightDist);
+                    const int targetX = useLeft ? w.left() : w.right() - kSpriteWidth;
                     c.setClimbTarget(targetX, w.top() - kSpriteHeight);
-                    LOG_DEBUG(QStringLiteral("walk: chose climb target window %1 (%2x%3) at (%4,%5)")
-                        .arg(idx).arg(w.width()).arg(w.height()).arg(targetX).arg(w.top() - kSpriteHeight));
+                    LOG_DEBUG(QStringLiteral("walk: chose climb target window %1 (%2x%3) at (%4,%5) [%6 edge]")
+                        .arg(idx).arg(w.width()).arg(w.height())
+                        .arg(targetX).arg(w.top() - kSpriteHeight)
+                        .arg(useLeft ? QStringLiteral("left") : QStringLiteral("right")));
                     return QStringLiteral("approach_wall");
                 }
                 m_climbCooldown = 800;
@@ -403,7 +416,7 @@ public:
         }
     }
 
-    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
@@ -429,12 +442,13 @@ public:
             h->grabbed = true;
             c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
             m_phase = Phase::Biting;
-            m_biteMsLeft = 320; // ~4 frames of the bite loop
+            m_biteMsLeft = 480; // ~6 frames of bite at 80ms each
             return {};
         }
 
-        // Biting phase — chomp for a bit then move on
-        m_biteMsLeft -= 100; // logic tick interval
+        // Biting phase — chomp for a bit then move on. deltaMs because
+        // we're at 60Hz now, not the 100ms-fixed assumption from v0.2.
+        m_biteMsLeft -= deltaMs;
         if (m_biteMsLeft <= 0) {
             // pick a corner to carry to (was at the bottom of the old version)
             const QRect& vd = world.virtualDesktop;

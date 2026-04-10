@@ -17,10 +17,22 @@ TrayIcon::TrayIcon(CreechrApp* app)
     m_menu = std::make_unique<QMenu>();
     m_pauseAction = m_menu->addAction(QStringLiteral("pause"));
     m_pauseAction->setCheckable(true);
+
+    m_menu->addSeparator();
+    m_fireHeistAction = m_menu->addAction(QStringLiteral("fire a heist now"));
+    m_releaseAction = m_menu->addAction(QStringLiteral("release everything he's stolen"));
+
+    m_menu->addSeparator();
+    m_openLogAction = m_menu->addAction(QStringLiteral("open log folder"));
+
+    m_menu->addSeparator();
     m_quitAction = m_menu->addAction(QStringLiteral("quit"));
 
-    connect(m_pauseAction, &QAction::toggled, this, &TrayIcon::onPauseToggled);
-    connect(m_quitAction, &QAction::triggered, m_app, &CreechrApp::quitGracefully);
+    connect(m_pauseAction,    &QAction::toggled,   this, &TrayIcon::onPauseToggled);
+    connect(m_fireHeistAction,&QAction::triggered, m_app, &CreechrApp::fireHeistNow);
+    connect(m_releaseAction,  &QAction::triggered, m_app, &CreechrApp::releaseEverything);
+    connect(m_openLogAction,  &QAction::triggered, m_app, &CreechrApp::openLogFolder);
+    connect(m_quitAction,     &QAction::triggered, m_app, &CreechrApp::quitGracefully);
     connect(m_app, &CreechrApp::pauseChanged, this, &TrayIcon::onAppPauseChanged);
     connect(m_icon.get(), &QSystemTrayIcon::activated, this, &TrayIcon::onActivated);
 

@@ -31,6 +31,9 @@ private:
     std::unique_ptr<QMenu> m_menu;
     QAction* m_pauseAction = nullptr;
     QAction* m_quitAction = nullptr;
+    QAction* m_releaseAction = nullptr;
+    QAction* m_fireHeistAction = nullptr;
+    QAction* m_openLogAction = nullptr;
 
     QIcon makePlaceholderIcon() const;
 };

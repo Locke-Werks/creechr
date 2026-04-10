@@ -15,7 +15,17 @@
 #include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
 
+#include <QDesktopServices>
 #include <QRandomGenerator>
+#include <QStandardPaths>
+#include <QUrl>
+
+namespace {
+// cached world snapshot, refreshed at ~10Hz inside onTick. defined here
+// at the top of the file so the tray-menu helper functions can also
+// see it (they fire heists from outside the tick loop).
+cr::WorldContext g_cachedWorld;
+} // namespace
 
 #include <QByteArray>
 #include <QCursor>
@@ -153,12 +163,47 @@ void CreechrApp::quitGracefully()
     quit();
 }
 
+void CreechrApp::releaseEverything()
+{
+    LOG_INFO(QStringLiteral("tray: releaseEverything"));
+    if (m_hoard) m_hoard->restoreAll();
+    if (m_creechr) {
+        m_creechr->clearHeist();
+        m_creechr->speak(QStringLiteral("fine, take it"), 1500);
+    }
+}
+
+void CreechrApp::openLogFolder()
+{
+    LOG_INFO(QStringLiteral("tray: openLogFolder"));
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void CreechrApp::fireHeistNow()
+{
+    LOG_INFO(QStringLiteral("tray: fireHeistNow"));
+    if (!m_creechr || m_creechr->heist()) return;
+    // pick whatever's available — prefer window, then dom, then uia, then cursor
+    std::optional<cr::HeistTarget> target;
+    if (m_winTargets) target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
+    if (!target.has_value() && m_extTargets && m_extTargets->isReady())
+        target = m_extTargets->pickRandom(g_cachedWorld.virtualDesktop);
+    if (!target.has_value() && m_uiaTargets)
+        target = m_uiaTargets->pickRandom(g_cachedWorld.virtualDesktop);
+    if (!target.has_value() && m_curTargets)
+        target = m_curTargets->current();
+    if (target.has_value()) {
+        LOG_INFO(QStringLiteral("tray: fire heist on %1").arg(target->label));
+        m_creechr->beginHeist(*target);
+        m_lastHeistAttemptMs = QDateTime::currentMSecsSinceEpoch();
+    }
+}
+
 // v0.2 uses GetLastInputInfo via cr::win32::millisSinceLastInput() so
 // keyboard activity counts too. v0.1 used a hand-rolled cursor tracker
-// that ignored typing — embarrassing in retrospect.
-namespace {
-cr::WorldContext g_cachedWorld;
-} // namespace
+// that ignored typing — embarrassing in retrospect. g_cachedWorld is
+// defined at the top of this file.
 
 void CreechrApp::onTick()
 {

@@ -42,6 +42,10 @@ public:
 public slots:
     void setPaused(bool paused);
     void quitGracefully();
+    // tray-menu actions:
+    void releaseEverything();   // manually run hoard.restoreAll()
+    void openLogFolder();       // shell-open the log directory
+    void fireHeistNow();        // queue an immediate heist attempt
 
 signals:
     void pauseChanged(bool paused);

@@ -342,78 +342,118 @@ private:
     int m_targetX = 0;
 };
 
+// HeistGrab is now animation-driven so the bite is actually visible.
+// enter() captures the pixmap (so we have it ready) and starts the
+// "grab" one-shot animation. tick() waits for the grab anim to finish,
+// THEN hides the source (for window heists) and transitions to carry.
+// the source window stays visible during the grab anim because we
+// want the user to see creechr lunge at it before it disappears.
 class HeistGrabState : public State
 {
 public:
     QString name() const override { return QStringLiteral("heist_grab"); }
 
-    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
+    void enter(Creechr& c, const WorldContext&) override
     {
-        HeistContext* h = c.heist();
-        if (!h) return QStringLiteral("idle");
+        m_capturedOk = false;
+        m_phase = Phase::Grabbing;
         c.setVelocity({ 0, 0 });
+        c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+
+        HeistContext* h = c.heist();
+        if (!h) return;
 
         if (h->target.kind == TargetKind::UiaElement) {
-            // SPEC DEVIATION (§6.2): the spec wants a full occluder
-            // window class drawn over the original element rect to make
-            // it visually disappear. v0.3 just BitBlt-captures the rect
-            // and has creechr carry the duplicate pixmap. the original
-            // element is never touched. less dramatic, dramatically
-            // safer (no orphaned occluder windows over user apps).
+            // see §6.2 deviation note in v0.3 — no occluder, just
+            // BitBlt the rect and have him carry the duplicate.
             QPixmap pm = capture::captureScreenRect(h->target.screenRect);
             if (pm.isNull()) {
-                LOG_WARN(QStringLiteral("heist: BitBlt of uia rect failed, aborting"));
-                c.clearHeist();
-                return QStringLiteral("idle");
+                LOG_WARN(QStringLiteral("heist: BitBlt of uia rect failed"));
+                return;
             }
             h->originalFrame = h->target.screenRect;
             h->carriedPixmap = pm;
-            h->grabbed = true;
-            LOG_INFO(QStringLiteral("heist: grabbed uia element %1").arg(h->target.label));
+            m_capturedOk = true;
+            LOG_INFO(QStringLiteral("heist: pre-captured uia element %1").arg(h->target.label));
         }
         else if (h->target.kind == TargetKind::Window) {
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(h->target.hwnd);
             if (!hwnd || !IsWindow(hwnd)) {
                 LOG_WARN(QStringLiteral("heist: target window died before grab"));
-                c.clearHeist();
-                return QStringLiteral("idle");
+                return;
             }
             QPixmap pm = capture::captureWindow(hwnd);
             if (pm.isNull()) {
-                LOG_WARN(QStringLiteral("heist: PrintWindow returned null, aborting"));
-                c.clearHeist();
-                return QStringLiteral("idle");
+                LOG_WARN(QStringLiteral("heist: PrintWindow returned null"));
+                return;
             }
-            // record original frame BEFORE hiding
             RECT r = {};
             GetWindowRect(hwnd, &r);
             h->originalFrame = QRect(QPoint(r.left, r.top),
                                      QPoint(r.right - 1, r.bottom - 1));
-            // hide
-            ShowWindow(hwnd, SW_HIDE);
             h->carriedPixmap = pm;
-            h->grabbed = true;
-            LOG_INFO(QStringLiteral("heist: grabbed %1 (%2x%3)")
+            m_capturedOk = true;
+            LOG_INFO(QStringLiteral("heist: pre-captured %1 (%2x%3)")
                 .arg(h->target.label).arg(pm.width()).arg(pm.height()));
 #endif
         } else if (h->target.kind == TargetKind::Cursor) {
-            // cursor heist: capture the cursor's current pos and start
-            // following it until release. nothing to "grab" visually.
             h->originalFrame = h->target.screenRect;
-            h->grabbed = true;
+            m_capturedOk = true;
+        }
+    }
+
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
+    {
+        HeistContext* h = c.heist();
+        if (!h) return QStringLiteral("idle");
+
+        if (!m_capturedOk) {
+            // capture failed in enter() — abort cleanly
+            c.clearHeist();
+            return QStringLiteral("idle");
         }
 
-        // pick a corner to carry to
-        const QRect& vd = world.virtualDesktop;
-        const bool topish  = QRandomGenerator::global()->bounded(2) == 0;
-        const bool leftish = QRandomGenerator::global()->bounded(2) == 0;
-        h->carryDestination = QPoint(
-            leftish ? vd.left() + 32 : vd.right() - (kSpriteWidth * 2),
-            topish  ? vd.top()  + 64 : vd.bottom() - (kSpriteHeight * 2)
-        );
-        return QStringLiteral("heist_carry");
+        if (m_phase == Phase::Grabbing) {
+            if (!c.animator().finished()) return {};
+            // grab anim done. NOW hide the source (window heists only)
+            // and bridge into a brief bite loop.
+#ifdef _WIN32
+            if (h->target.kind == TargetKind::Window) {
+                HWND hwnd = static_cast<HWND>(h->target.hwnd);
+                if (hwnd && IsWindow(hwnd)) {
+                    ShowWindow(hwnd, SW_HIDE);
+                }
+            }
+#endif
+            h->grabbed = true;
+            c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+            m_phase = Phase::Biting;
+            m_biteMsLeft = 320; // ~4 frames of the bite loop
+            return {};
+        }
+
+        // Biting phase — chomp for a bit then move on
+        m_biteMsLeft -= 100; // logic tick interval
+        if (m_biteMsLeft <= 0) {
+            // pick a corner to carry to (was at the bottom of the old version)
+            const QRect& vd = world.virtualDesktop;
+            const bool topish  = QRandomGenerator::global()->bounded(2) == 0;
+            const bool leftish = QRandomGenerator::global()->bounded(2) == 0;
+            h->carryDestination = QPoint(
+                leftish ? vd.left() + 32 : vd.right() - (kSpriteWidth * 2),
+                topish  ? vd.top()  + 64 : vd.bottom() - (kSpriteHeight * 2)
+            );
+            return QStringLiteral("heist_carry");
+        }
+        return {};
     }
+
+private:
+    enum class Phase { Grabbing, Biting };
+    Phase m_phase = Phase::Grabbing;
+    bool m_capturedOk = false;
+    int m_biteMsLeft = 0;
 };
 
 class HeistCarryState : public State
@@ -428,8 +468,10 @@ public:
         const bool right = c.heist()->carryDestination.x() > c.position().x();
         c.setFacingRight(right);
         c.setVelocity({ right ? 80.0 : -80.0, 0.0 });
-        c.animator().setAnimation(right ? QStringLiteral("walk_right")
-                                        : QStringLiteral("walk_left"));
+        // carry-specific walk animation: arms held forward like he's
+        // actually holding the thing, instead of swinging at his sides.
+        c.animator().setAnimation(right ? QStringLiteral("carry_right")
+                                        : QStringLiteral("carry_left"));
     }
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
@@ -569,8 +611,9 @@ public:
         const bool right = orig.x() > c.position().x();
         c.setFacingRight(right);
         c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
-        c.animator().setAnimation(right ? QStringLiteral("walk_right")
-                                        : QStringLiteral("walk_left"));
+        // still carrying the thing, so still using the carry walk anim
+        c.animator().setAnimation(right ? QStringLiteral("carry_right")
+                                        : QStringLiteral("carry_left"));
     }
 
     QString tick(int deltaMs, Creechr& c, const WorldContext&) override
@@ -711,6 +754,20 @@ QRect Creechr::drawRect() const
 QRect Creechr::frameSrcRect() const
 {
     return m_animator.currentFrameRect();
+}
+
+QPoint Creechr::carryAnchorScreen() const
+{
+    // matches the carry/grab pose drawn in sprite_atlas.cpp:
+    //   shoulders at cell-y = (4 + 13) = 17
+    //   carry hand offset = ( ±8, 3 )  →  cell-y of hands ≈ 20
+    //   shoulder x: left=9, right=38 (cell-local)
+    // when facing right: hands extend out the right side, around cell-x=46
+    // when facing left:  hands extend out the left  side, around cell-x= 1
+    const int handY = 20;
+    const int handX = m_facingRight ? 46 : 2;
+    return QPoint(static_cast<int>(m_position.x()) + handX,
+                  static_cast<int>(m_position.y()) + handY);
 }
 
 } // namespace cr

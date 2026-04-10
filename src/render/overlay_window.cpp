@@ -112,12 +112,20 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     const QRect src = m_creechr->frameSrcRect();
     p.drawPixmap(dst, m_atlas->pixmap(), src);
 
-    // carried/stashed bitmap, if there's an active heist with a pixmap
+    // carried/stashed bitmap, if there's an active heist with a pixmap.
+    // when stashed it sits where it was dropped. while creechr is
+    // carrying it, it's centered on his visible hands (carryAnchorScreen)
+    // so the carry pose actually looks like he's holding the thing.
     if (const auto* h = m_creechr->heist(); h && !h->carriedPixmap.isNull()) {
-        const QPoint where = h->stashed
-            ? h->stashedAt
-            : QPoint(static_cast<int>(m_creechr->position().x()) + 36,
-                     static_cast<int>(m_creechr->position().y()) - 4);
+        QPoint where;
+        if (h->stashed) {
+            where = h->stashedAt;
+        } else {
+            const QPoint anchor = m_creechr->carryAnchorScreen();
+            const QSize  pms    = h->carriedPixmap.size();
+            where = QPoint(anchor.x() - pms.width()  / 2,
+                           anchor.y() - pms.height() / 2);
+        }
         p.drawPixmap(where - widgetOrigin, h->carriedPixmap);
     }
 }

@@ -48,6 +48,13 @@ public:
     QRect drawRect() const;
     QRect frameSrcRect() const;
 
+    // where the carried bitmap should be drawn relative to creechr's
+    // visible hands. centered on the carried pixmap (so the overlay
+    // subtracts half the pixmap size before blitting). depends on
+    // facing direction so the carried thing actually sits in the hands
+    // creechr's currently extending forward.
+    QPoint carryAnchorScreen() const;
+
     // accessors used by states
     QPointF position() const { return m_position; }
     void setPosition(QPointF p) { m_position = p; }

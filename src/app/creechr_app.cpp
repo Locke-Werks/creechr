@@ -104,6 +104,22 @@ void CreechrApp::setPaused(bool paused)
         return;
     }
     m_paused = paused;
+    // spec §4.8 says pause stops the timers, not just no-ops them.
+    // honoring that. resume restarts them with fresh timestamps so
+    // the next dt isn't "however many seconds you were paused for".
+    if (m_logicTimer) {
+        if (paused) m_logicTimer->stop();
+        else        m_logicTimer->start();
+    }
+    if (m_renderTimer) {
+        if (paused) m_renderTimer->stop();
+        else        m_renderTimer->start();
+    }
+    if (!paused) {
+        m_lastLogicMs  = QDateTime::currentMSecsSinceEpoch();
+        m_lastRenderMs = m_lastLogicMs;
+    }
+    LOG_INFO(paused ? QStringLiteral("paused") : QStringLiteral("resumed"));
     emit pauseChanged(m_paused);
 }
 

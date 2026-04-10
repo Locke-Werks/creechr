@@ -113,6 +113,10 @@ public:
             m_subMs += deltaMs;
             if (m_subMs >= m_subThreshold) {
                 fireMicroBehavior(c);
+                if (m_pouncing) {
+                    m_pouncing = false;
+                    return QStringLiteral("flung");
+                }
             }
         }
 
@@ -131,6 +135,32 @@ private:
 
     void fireMicroBehavior(Creechr& c)
     {
+        // 1-in-20 chance: POUNCE at the cursor like a cat. compute the
+        // direction from creechr to cursor, set velocity in that
+        // direction with an upward arc, transition to flung. flung's
+        // physics handle the rest — gravity, bounce, settle. dramatic
+        // and entirely new every time because the cursor moves.
+        if (QRandomGenerator::global()->bounded(20) == 0) {
+            const QPoint cursor = QCursor::pos();
+            const double dx = cursor.x() - (c.position().x() + 24);
+            const double dy = cursor.y() - (c.position().y() + 24);
+            const double mag = std::sqrt(dx * dx + dy * dy);
+            if (mag > 1.0 && mag < 600.0) {
+                const double speed = 220.0 + qMin(mag, 400.0) * 0.6;
+                c.setFacingRight(dx >= 0);
+                c.setVelocity({ (dx / mag) * speed, -180.0 + (dy / mag) * speed * 0.3 });
+                c.speakRandom({
+                    QStringLiteral("POUNCE"),
+                    QStringLiteral("yoink"),
+                    QStringLiteral("RAH"),
+                    QStringLiteral("got u"),
+                    QStringLiteral("HA"),
+                }, 1500);
+                m_pouncing = true; // ask the outer tick to transition
+                return;
+            }
+        }
+
         const int roll = QRandomGenerator::global()->bounded(10);
         if (roll < 4) {
             c.animator().setAnimation(QStringLiteral("blink"), /*reset*/true);
@@ -164,6 +194,7 @@ private:
     int m_subMs = 0;
     int m_subThreshold = 0;
     bool m_inBehavior = false;
+    bool m_pouncing = false;
 };
 
 // horizontal stroll. constant velocity. bounces off screen edges.
@@ -1391,7 +1422,8 @@ public:
     }
 };
 
-// nap. just sit there with eyes closed.
+// nap. just sit there with eyes closed. periodically emits a small
+// "zzz" speech bubble so its visibly clear hes asleep, not crashed.
 class SleepState : public State
 {
 public:
@@ -1401,9 +1433,10 @@ public:
     {
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("sleep"));
+        m_zMs = 0;
     }
 
-    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         // pending heist wakes him up too — orchestrator can queue a
         // heist while creechr is napping and we want him to act on it.
@@ -1416,8 +1449,23 @@ public:
         if (world.msSinceLastInput < 1000) {
             return QStringLiteral("wake");
         }
+        // periodic zzz so the sleep is visibly happening
+        m_zMs += deltaMs;
+        if (m_zMs >= 2200) {
+            m_zMs = 0;
+            const QStringList zs = {
+                QStringLiteral("z"),
+                QStringLiteral("zz"),
+                QStringLiteral("zzz"),
+                QStringLiteral("..."),
+            };
+            c.speakRandom(zs, 1600);
+        }
         return {};
     }
+
+private:
+    int m_zMs = 0;
 };
 
 // one-shot wake animation, then back to idle.

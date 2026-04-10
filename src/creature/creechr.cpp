@@ -55,7 +55,9 @@ bool hasPlatformUnder(const Creechr& c, const WorldContext& world, int* outNewFl
     return false;
 }
 
-// pause-the-walk-for-a-bit. 1-3s of standing around looking shifty.
+// pause-the-walk-for-a-bit. 1-3s of standing around. while standing,
+// fire random one-shot personality behaviors (blink, yawn, scratch)
+// on a 1.5-3.5s timer so he doesnt look like a frozen corpse.
 class IdleState : public State
 {
 public:
@@ -65,8 +67,10 @@ public:
     {
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("idle"));
-        // 800-2400ms of standing around
-        m_remaining = 800 + (QRandomGenerator::global()->bounded(1600));
+        m_remaining = 1200 + QRandomGenerator::global()->bounded(2400);
+        m_subMs = 0;
+        m_subThreshold = randomSubThreshold();
+        m_inBehavior = false;
     }
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
@@ -94,6 +98,24 @@ public:
         if (world.msSinceLastInput > 30000) {
             return QStringLiteral("sleep");
         }
+
+        // personality micro-behaviors. if we're playing a one-shot anim,
+        // wait for it to finish then go back to the regular idle pose.
+        // otherwise count up to the next behavior trigger.
+        if (m_inBehavior) {
+            if (c.animator().finished()) {
+                c.animator().setAnimation(QStringLiteral("idle"));
+                m_inBehavior = false;
+                m_subMs = 0;
+                m_subThreshold = randomSubThreshold();
+            }
+        } else {
+            m_subMs += deltaMs;
+            if (m_subMs >= m_subThreshold) {
+                fireMicroBehavior(c);
+            }
+        }
+
         m_remaining -= deltaMs;
         if (m_remaining > 0) {
             return {};
@@ -102,7 +124,31 @@ public:
     }
 
 private:
+    static int randomSubThreshold()
+    {
+        return 1500 + QRandomGenerator::global()->bounded(2000);
+    }
+
+    void fireMicroBehavior(Creechr& c)
+    {
+        const int roll = QRandomGenerator::global()->bounded(10);
+        if (roll < 5) {
+            // blink — most common
+            c.animator().setAnimation(QStringLiteral("blink"), /*reset*/true);
+        } else if (roll < 8) {
+            // scratch
+            c.animator().setAnimation(QStringLiteral("scratch"), /*reset*/true);
+        } else {
+            // yawn — least common, the longest one
+            c.animator().setAnimation(QStringLiteral("yawn"), /*reset*/true);
+        }
+        m_inBehavior = true;
+    }
+
     int m_remaining = 0;
+    int m_subMs = 0;
+    int m_subThreshold = 0;
+    bool m_inBehavior = false;
 };
 
 // horizontal stroll. constant velocity. bounces off screen edges.

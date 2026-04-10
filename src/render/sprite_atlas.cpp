@@ -251,13 +251,15 @@ bool SpriteAtlas::loadFromFile(const QString& path)
 
 void SpriteAtlas::makePlaceholder()
 {
-    // 8 columns × 12 rows of 48px cells. one row per animation.
-    // 384 × 576 atlas. transparent background, draw in.
+    // 8 columns × 15 rows of 48px cells. one row per animation.
+    // 384 × 720 atlas. transparent background, draw in.
     // (smoothness pass bumped most cycles up — walks went from 6 frames
     // to 8, climbs/grab/bite/carry from 4 to 6. idle gained a 2-frame
-    // breathing bob so he doesnt look like a corpse standing there.)
+    // breathing bob. then we added blink/yawn/scratch micro-behaviors
+    // for IdleState to fire on a poisson timer so he doesnt just stand
+    // there looking like a corpse during idle.)
     constexpr int kCols = 8;
-    constexpr int kRows = 12;
+    constexpr int kRows = 15;
     m_pixmap = QPixmap(kCols * kCellW, kRows * kCellH);
     m_pixmap.fill(Qt::transparent);
 
@@ -491,6 +493,65 @@ void SpriteAtlas::makePlaceholder()
         }
     }
 
+    // ----- row 12: blink (5 frames) -----
+    // open → half → closed → half → open. one-shot, idle returns
+    // to the regular idle anim afterwards.
+    {
+        struct B { bool closed; int bob; };
+        const B frames[5] = {
+            { false, 0 }, { false, 0 }, { true, 0 }, { false, 0 }, { false, 0 }
+        };
+        // middle 3 frames are the actual blink — the half-state is
+        // achieved by drawing closed eyes for one frame between opens
+        for (int i = 0; i < 5; ++i) {
+            CreechrPose pose;
+            pose.eyesClosed = frames[i].closed;
+            pose.bodyBob = frames[i].bob;
+            drawCreechr(p, cellRect(i, 12), pose);
+        }
+    }
+
+    // ----- row 13: yawn (5 frames) -----
+    // mouth closed → slack → wide open + slumped → slack → closed.
+    // his eyes squint a tiny bit (closed) at the apex of the yawn.
+    {
+        struct Y { MouthState m; bool eyes; int bob; };
+        const Y frames[5] = {
+            { MouthState::Closed,    false, 0 },
+            { MouthState::Slack,     false, 0 },
+            { MouthState::OpenWide,  true,  1 },
+            { MouthState::Slack,     false, 0 },
+            { MouthState::Closed,    false, 0 },
+        };
+        for (int i = 0; i < 5; ++i) {
+            CreechrPose pose;
+            pose.mouth = frames[i].m;
+            pose.eyesClosed = frames[i].eyes;
+            pose.bodyBob = frames[i].bob;
+            drawCreechr(p, cellRect(i, 13), pose);
+        }
+    }
+
+    // ----- row 14: scratch (5 frames) -----
+    // arms at sides → right arm rising → right arm at head → arm down
+    // → back to neutral. left arm hangs the whole time.
+    {
+        struct S { ArmPose right; int bob; };
+        const S frames[5] = {
+            { armSide(),         0 },
+            { ArmPose{ 0, 0 },   0 },   // arm rising
+            { ArmPose{ 0, -8 },  0 },   // arm at head height
+            { ArmPose{ 0, 0 },   0 },   // arm dropping
+            { armSide(),         0 },
+        };
+        for (int i = 0; i < 5; ++i) {
+            CreechrPose pose;
+            pose.rightArm = frames[i].right;
+            pose.bodyBob = frames[i].bob;
+            drawCreechr(p, cellRect(i, 14), pose);
+        }
+    }
+
     p.end();
 
     auto add = [this](const QString& name, std::initializer_list<QPoint> cells,
@@ -518,6 +579,9 @@ void SpriteAtlas::makePlaceholder()
     add("bite",       { {0,9},{1,9},{2,9},{3,9},{4,9},{5,9} },    70, true);
     add("carry_right",{ {0,10},{1,10},{2,10},{3,10},{4,10},{5,10} },95, true);
     add("carry_left", { {0,11},{1,11},{2,11},{3,11},{4,11},{5,11} },95, true);
+    add("blink",      { {0,12},{1,12},{2,12},{3,12},{4,12} },     90, false);
+    add("yawn",       { {0,13},{1,13},{2,13},{3,13},{4,13} },    140, false);
+    add("scratch",    { {0,14},{1,14},{2,14},{3,14},{4,14} },    110, false);
 
     LOG_INFO(QStringLiteral("sprite_atlas: placeholder atlas built (%1 anims, %2x%3 cells)")
         .arg(m_anims.size()).arg(kCellW).arg(kCellH));

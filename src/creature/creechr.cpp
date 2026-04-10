@@ -4,6 +4,7 @@
 #include "heist/hoard.h"
 #include "render/sprite_atlas.h"
 #include "targets/extension_target_provider.h"
+#include "util/app_snark.h"
 #include "util/logging.h"
 #include "util/win32_helpers.h"
 
@@ -174,9 +175,16 @@ private:
         } else if (roll < 9) {
             c.animator().setAnimation(QStringLiteral("yawn"), /*reset*/true);
         } else {
-            // 10% chance: just say something instead of animating.
-            // doesnt set m_inBehavior because there's no anim to wait
-            // for — return early.
+            // 10% chance: speak instead of animating. doesnt set
+            // m_inBehavior because there's no anim to wait for.
+            // PREFER an app-specific snark line about whatever's in
+            // the foreground — that's where the personality lives.
+            // fall back to generic if no specific lines exist.
+            const QString snark = cr::currentAppSnark();
+            if (!snark.isEmpty()) {
+                c.speak(snark, 1900);
+                return;
+            }
             const QStringList lines = {
                 QStringLiteral("ugh."),
                 QStringLiteral("..."),

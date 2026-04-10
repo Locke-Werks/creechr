@@ -67,6 +67,8 @@ add_executable(creechr WIN32
     src/util/dpi.cpp
     src/util/win32_helpers.h
     src/util/win32_helpers.cpp
+    src/util/app_snark.h
+    src/util/app_snark.cpp
 )
 
 target_compile_definitions(creechr PRIVATE

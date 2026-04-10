@@ -2,6 +2,16 @@
 #include "util/logging.h"
 
 #include <QImage>
+#include <QRandomGenerator>
+
+namespace cr::capture {
+// small wrapper so the chaos check below can be a one-liner without
+// dragging the bounded() name into the wider namespace
+static int qrand_global_bounded10()
+{
+    return QRandomGenerator::global()->bounded(10);
+}
+} // namespace cr::capture
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -107,6 +117,15 @@ QPixmap fitForCarry(const QPixmap& src)
     constexpr int kMaxW = 64;
     constexpr int kMaxH = 48;
     if (src.width() <= kMaxW && src.height() <= kMaxH) {
+        return src;
+    }
+    // CHAOS MODE: when the env var is set, ~25% of carries skip the
+    // shrink and return the original full-size pixmap. this restores
+    // the legendary v0.x bug where creechr would carry an entire 800px
+    // window across the screen, dwarfing himself and the rest of the
+    // desktop. it was funny. it's STILL funny. user explicitly liked it.
+    static const bool kChaos = !qgetenv("CREECHR_CHAOS").isEmpty();
+    if (kChaos && (qrand_global_bounded10() < 3)) {
         return src;
     }
     return src.scaled(kMaxW, kMaxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);

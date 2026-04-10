@@ -270,6 +270,44 @@ void CreechrApp::onTick()
         }
     }
 
+    // mouse-hover noticing: when the cursor gets within 100 px of
+    // creechr while he's just walking or idling, fire a one-shot
+    // reaction (speech bubble + flip to face the cursor). 5-second
+    // cooldown so wiggling the mouse over him doesnt spam reactions.
+    // gated on safe states so we dont interrupt heists / climbs / gnaw.
+    if (m_creechr && (now - m_lastNoticedMs) > 5000) {
+        const QString stateName = m_creechr->stateMachine().currentName();
+        const bool safeState = (stateName == QLatin1String("idle")
+                              || stateName == QLatin1String("walk"));
+        if (safeState) {
+            const QPointF cp = m_creechr->position();
+            const QPoint  mp = g_cachedWorld.cursorPos;
+            // distance from cursor to creechrs sprite center
+            const int cx = static_cast<int>(cp.x()) + 24;
+            const int cy = static_cast<int>(cp.y()) + 24;
+            const int dx = mp.x() - cx;
+            const int dy = mp.y() - cy;
+            const int distSq = dx * dx + dy * dy;
+            if (distSq < 100 * 100) {
+                m_lastNoticedMs = now;
+                m_creechr->setFacingRight(dx >= 0);
+                static const QStringList kNoticedLines = {
+                    QStringLiteral("hi"),
+                    QStringLiteral("back off"),
+                    QStringLiteral("..."),
+                    QStringLiteral("what"),
+                    QStringLiteral("excuse me"),
+                    QStringLiteral("oh hello"),
+                    QStringLiteral("dont"),
+                    QStringLiteral("personal space"),
+                    QStringLiteral("rude"),
+                    QStringLiteral("yes?"),
+                };
+                m_creechr->speakRandom(kNoticedLines, 1800);
+            }
+        }
+    }
+
     // physics + animator + render — all every tick now so movement is
     // visibly continuous instead of hopping in 100ms chunks.
     m_creechr->tickLogic(dt, g_cachedWorld);

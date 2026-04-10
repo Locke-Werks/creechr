@@ -94,6 +94,7 @@ public:
     const Animator& animator() const { return m_animator; }
 
     StateMachine& stateMachine() { return m_states; }
+    const StateMachine& stateMachine() const { return m_states; }
 
     // y of the platform creechr is currently standing on. equals
     // virtualDesktop.bottom - 32 when on the floor; equals window.top - 32

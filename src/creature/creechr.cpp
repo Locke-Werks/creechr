@@ -210,7 +210,15 @@ public:
         if (qFuzzyIsNull(c.velocity().x())) {
             c.setFacingRight(QRandomGenerator::global()->bounded(2) == 0);
         }
-        const double speed = 60.0; // pixels/sec
+        // walk speed varies per session: 60% normal stroll, 25% slow
+        // amble, 15% hurried scurry. makes the back-and-forth less
+        // metronomic.
+        auto* rng = QRandomGenerator::global();
+        const int rollSpeed = rng->bounded(100);
+        double speed = 60.0;
+        if (rollSpeed < 25)      speed = 38.0;  // slow
+        else if (rollSpeed < 85) speed = 60.0;  // normal
+        else                     speed = 105.0; // fast
         c.setVelocity({ c.facingRight() ? speed : -speed, 0.0 });
         c.animator().setAnimation(c.facingRight() ? QStringLiteral("walk_right")
                                                    : QStringLiteral("walk_left"));

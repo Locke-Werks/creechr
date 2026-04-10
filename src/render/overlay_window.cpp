@@ -137,6 +137,27 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
                    QColor(20, 0, 15));
     }
 
+    // shadow ellipse at creechr's feet — gives him visual grounding
+    // so he doesnt look like he's floating an inch above the surface.
+    // skip when flung (shadow on a falling creature looks wrong).
+    {
+        const QString sname = m_creechr->stateMachine().currentName();
+        const bool drawShadow = (sname != QLatin1String("flung")
+                              && sname != QLatin1String("rappel_climb")
+                              && sname != QLatin1String("rappel_descend"));
+        if (drawShadow) {
+            const int shadowCx = static_cast<int>(m_creechr->position().x()) + 24;
+            const int shadowCy = static_cast<int>(m_creechr->position().y()) + 46;
+            const QRect shadow(shadowCx - 14, shadowCy - 3, 28, 6);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 70));
+            p.drawEllipse(shadow.translated(-widgetOrigin));
+            p.setRenderHint(QPainter::Antialiasing, false);
+            p.setBrush(Qt::NoBrush);
+        }
+    }
+
     const QRect dst = m_creechr->drawRect().translated(-widgetOrigin);
     const QRect src = m_creechr->frameSrcRect();
     p.drawPixmap(dst, m_atlas->pixmap(), src);

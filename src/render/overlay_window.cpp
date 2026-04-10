@@ -102,12 +102,20 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
         return;
     }
 
+    const QPoint widgetOriginEarly = geometry().topLeft();
+
+    // trophies: small messy pile of past stolen things in the corner.
+    // drawn FIRST so creechr and his current carry sit on top.
+    for (const auto& t : m_creechr->trophies()) {
+        p.drawPixmap(t.nestPos - widgetOriginEarly, t.pixmap);
+    }
+
     // creechr's drawRect is in virtual-desktop coords. our widget's
     // top-left maps to the virtual desktop's top-left, but if the
     // virtual desktop has a negative origin (multimon to the left of
     // primary), we need to subtract our own geometry().topLeft()
     // before passing to QPainter (which works in widget-local coords).
-    const QPoint widgetOrigin = geometry().topLeft();
+    const QPoint widgetOrigin = widgetOriginEarly;
 
     // rappel line, drawn UNDER creechr so it looks like the rope comes
     // from inside his hands rather than over them

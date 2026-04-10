@@ -24,6 +24,15 @@ struct WorldContext;
 class Hoard;
 class ExtensionTargetProvider;
 
+// a trophy: a permanent (per-session) visual marker dropped at a
+// nest position whenever creechr successfully completes and returns
+// a heist. accumulates in a corner of the screen as a small pile.
+// purely cosmetic, no gameplay effect, capped at a small number.
+struct Trophy {
+    QPixmap pixmap;
+    QPoint  nestPos;  // top-left in screen coords
+};
+
 // tiny visual particle. lives a few hundred ms, fades by alpha based
 // on age/lifetime, gets drawn by OverlayWindow as a small filled rect.
 // no collision, no gravity (for now), pure visual flair.
@@ -129,6 +138,13 @@ public:
     void tickParticles(int deltaMs);
     const QVector<Particle>& particles() const { return m_particles; }
 
+    // trophies — pemanent (per-session) cosmetic markers dropped after
+    // successful heist returns. capped at 8 (oldest dropped). nest
+    // position is computed from the virtual desktop bounds in the
+    // bottom-right corner with random scatter so the pile looks messy.
+    void addTrophy(const QPixmap& pm, const QRect& virtualDesktop);
+    const QVector<Trophy>& trophies() const { return m_trophies; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -165,6 +181,7 @@ private:
     QString m_speechText;
     qint64 m_speechExpiryMs = 0;
     QVector<Particle> m_particles;
+    QVector<Trophy>   m_trophies;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

@@ -1363,7 +1363,7 @@ public:
                                         : QStringLiteral("carry_left"));
     }
 
-    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
@@ -1372,10 +1372,12 @@ public:
 
         const int targetX = h->originalFrame.left();
         if (qAbs(static_cast<int>(pos.x()) - targetX) <= 6) {
-            // arrived. restore via hoard.
+            // arrived. restore via hoard, then drop a trophy in the
+            // nest as a permanent (per-session) cosmetic marker.
             if (auto* hoard = c.hoard(); hoard && !h->hoardId.isEmpty()) {
                 hoard->restoreById(h->hoardId);
             }
+            c.addTrophy(h->carriedPixmap, world.virtualDesktop);
 #ifdef _WIN32
             if (h->target.kind == TargetKind::Cursor) {
                 SetCursorPos(h->originalFrame.center().x(),
@@ -1552,6 +1554,28 @@ void Creechr::spawnPuff(QPointF where, int count, QColor color, int lifetimeMs)
             // hard cap so a runaway state doesnt accumulate forever
             m_particles.removeFirst();
         }
+    }
+}
+
+void Creechr::addTrophy(const QPixmap& pm, const QRect& virtualDesktop)
+{
+    if (pm.isNull()) return;
+    constexpr int kMaxTrophies = 8;
+    constexpr int kNestW = 140;
+    constexpr int kNestH = 90;
+    auto* rng = QRandomGenerator::global();
+    // nest is anchored to the bottom-right corner of the desktop with
+    // a small inset so it doesnt collide with the taskbar. random
+    // scatter within the nest area to make the pile look messy.
+    const int nestX = virtualDesktop.right() - kNestW - 16;
+    const int nestY = virtualDesktop.bottom() - kNestH - 8;
+    Trophy t;
+    t.pixmap = pm;
+    t.nestPos = QPoint(nestX + rng->bounded(kNestW - pm.width()),
+                       nestY + rng->bounded(kNestH - pm.height()));
+    m_trophies.push_back(std::move(t));
+    if (m_trophies.size() > kMaxTrophies) {
+        m_trophies.removeFirst();
     }
 }
 

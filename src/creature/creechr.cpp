@@ -97,12 +97,12 @@ public:
         const double dt = deltaMs / 1000.0;
         QPointF pos = c.position() + c.velocity() * dt;
 
-        const bool onFloor = c.floorY() >= world.virtualDesktop.bottom() - 33;
+        const bool onFloor = c.floorY() >= world.virtualDesktop.bottom() - (kSpriteHeight + 1);
 
         if (onFloor) {
             // on the floor: bounce off screen edges
             const int leftLimit  = world.virtualDesktop.left();
-            const int rightLimit = world.virtualDesktop.right() - 32;
+            const int rightLimit = world.virtualDesktop.right() - kSpriteWidth;
             if (pos.x() < leftLimit) {
                 pos.setX(leftLimit);
                 c.setFacingRight(true);
@@ -123,11 +123,11 @@ public:
             // — find one whose top is at our current y and whose x range
             // contains us, that's it.
             int leftLimit  = world.virtualDesktop.left();
-            int rightLimit = world.virtualDesktop.right() - 32;
+            int rightLimit = world.virtualDesktop.right() - kSpriteWidth;
             for (const QRect& w : world.windowRects) {
-                if (w.top() == c.floorY() + 32 && w.left() <= pos.x() && pos.x() <= w.right()) {
+                if (w.top() == c.floorY() + kSpriteHeight && w.left() <= pos.x() && pos.x() <= w.right()) {
                     leftLimit = w.left();
-                    rightLimit = w.right() - 32;
+                    rightLimit = w.right() - kSpriteWidth;
                     break;
                 }
             }
@@ -136,7 +136,7 @@ public:
                 pos.setX(qBound<qreal>(leftLimit, pos.x(), rightLimit));
                 c.setPosition(pos);
                 c.setClimbTarget(static_cast<int>(pos.x()),
-                                 world.virtualDesktop.bottom() - 32);
+                                 world.virtualDesktop.bottom() - kSpriteHeight);
                 return QStringLiteral("climb_down");
             }
         }
@@ -152,13 +152,13 @@ public:
                 // pick a random window. require some minimum size.
                 const int idx = QRandomGenerator::global()->bounded(world.windowRects.size());
                 const QRect& w = world.windowRects[idx];
-                if (w.height() >= 48 && w.width() >= 48) {
+                if (w.height() >= 64 && w.width() >= 64) {
                     const int leftDist  = qAbs(static_cast<int>(pos.x()) - w.left());
                     const int rightDist = qAbs(static_cast<int>(pos.x()) - w.right());
-                    const int targetX = (leftDist <= rightDist) ? w.left() : w.right() - 32;
-                    c.setClimbTarget(targetX, w.top() - 32);
+                    const int targetX = (leftDist <= rightDist) ? w.left() : w.right() - kSpriteWidth;
+                    c.setClimbTarget(targetX, w.top() - kSpriteHeight);
                     LOG_DEBUG(QStringLiteral("walk: chose climb target window %1 (%2x%3) at (%4,%5)")
-                        .arg(idx).arg(w.width()).arg(w.height()).arg(targetX).arg(w.top() - 32));
+                        .arg(idx).arg(w.width()).arg(w.height()).arg(targetX).arg(w.top() - kSpriteHeight));
                     return QStringLiteral("approach_wall");
                 }
                 m_climbCooldown = 800;
@@ -409,8 +409,8 @@ public:
         const bool topish  = QRandomGenerator::global()->bounded(2) == 0;
         const bool leftish = QRandomGenerator::global()->bounded(2) == 0;
         h->carryDestination = QPoint(
-            leftish ? vd.left() + 32 : vd.right() - 96,
-            topish  ? vd.top()  + 64 : vd.bottom() - 96
+            leftish ? vd.left() + 32 : vd.right() - (kSpriteWidth * 2),
+            topish  ? vd.top()  + 64 : vd.bottom() - (kSpriteHeight * 2)
         );
         return QStringLiteral("heist_carry");
     }
@@ -679,7 +679,7 @@ void Creechr::clearHeist()
 void Creechr::initialize(const WorldContext& world)
 {
     // park him on the bottom of the primary screen and start in idle
-    m_floorY = world.virtualDesktop.bottom() - 32;
+    m_floorY = world.virtualDesktop.bottom() - kSpriteHeight;
     m_position = QPointF(world.virtualDesktop.left() + 200,
                          static_cast<double>(m_floorY));
     m_states.changeTo(QStringLiteral("idle"), *this, world);

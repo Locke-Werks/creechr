@@ -14,6 +14,14 @@
 
 namespace cr {
 
+// the canonical cell size for creechr's sprite. used by Creechr too,
+// for things like "where's the floor relative to my y position" and
+// "how far off the right edge of the screen is too far". if you change
+// these, the world geometry math in creature/creechr.cpp keeps up
+// because it reads these constants instead of hard-coding them.
+constexpr int kSpriteWidth  = 48;
+constexpr int kSpriteHeight = 48;
+
 struct AnimFrame {
     QRect src;        // rect in the atlas pixmap
     int durationMs;   // how long to hold this frame

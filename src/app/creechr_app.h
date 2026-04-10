@@ -13,6 +13,7 @@ class QTimer;
 namespace cr {
 class Creechr;
 class SpriteAtlas;
+class WindowEnumerator;
 }
 
 class CreechrApp : public QApplication
@@ -47,6 +48,7 @@ private:
     std::unique_ptr<OverlayWindow> m_overlay;
     std::unique_ptr<cr::SpriteAtlas> m_atlas;
     std::unique_ptr<cr::Creechr> m_creechr;
+    std::unique_ptr<cr::WindowEnumerator> m_windows;
     QTimer* m_logicTimer = nullptr;
     QTimer* m_renderTimer = nullptr;
     qint64 m_lastLogicMs = 0;

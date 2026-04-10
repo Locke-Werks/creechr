@@ -40,6 +40,10 @@ add_executable(creechr WIN32
     src/creature/state_machine.h
     src/creature/state_machine.cpp
     src/creature/world_context.h
+    src/world/window_enumerator.h
+    src/world/window_enumerator.cpp
+    src/world/window_geometry.h
+    src/world/window_geometry.cpp
     src/util/logging.h
     src/util/logging.cpp
 )

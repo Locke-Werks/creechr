@@ -5,6 +5,7 @@
 #include "render/overlay_window.h"
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
+#include "world/window_enumerator.h"
 
 #include <QByteArray>
 #include <QCursor>
@@ -47,6 +48,11 @@ void CreechrApp::start()
     m_overlay->setCreechr(m_creechr.get());
     m_overlay->setAtlas(m_atlas.get());
     m_overlay->show();
+
+    m_windows = std::make_unique<cr::WindowEnumerator>();
+#ifdef _WIN32
+    m_windows->setSelfHwnd(reinterpret_cast<HWND>(m_overlay->winId()));
+#endif
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
@@ -150,6 +156,9 @@ void CreechrApp::onLogicTick()
     world.virtualDesktop = db;
     world.cursorPos = QCursor::pos();
     world.msSinceLastInput = g_idle.sample(now);
+    if (m_windows) {
+        world.windowRects = m_windows->snapshotRects();
+    }
 
     m_creechr->tickLogic(dt, world);
 }

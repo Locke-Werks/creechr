@@ -45,6 +45,19 @@ public:
 
     StateMachine& stateMachine() { return m_states; }
 
+    // y of the platform creechr is currently standing on. equals
+    // virtualDesktop.bottom - 32 when on the floor; equals window.top - 32
+    // when standing on a window. updated by climb states.
+    int floorY() const { return m_floorY; }
+    void setFloorY(int y) { m_floorY = y; }
+
+    // when climbing, the (x,y) we're heading to. only meaningful while
+    // a climb state is active. -1 means "no climb in progress".
+    int climbTargetX() const { return m_climbTargetX; }
+    int climbTargetY() const { return m_climbTargetY; }
+    void setClimbTarget(int x, int y) { m_climbTargetX = x; m_climbTargetY = y; }
+    void clearClimbTarget() { m_climbTargetX = -1; m_climbTargetY = -1; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -53,6 +66,9 @@ private:
     QPointF m_position { 100.0, 600.0 };
     QPointF m_velocity { 0.0,   0.0   };
     bool m_facingRight = true;
+    int m_floorY = 0;
+    int m_climbTargetX = -1;
+    int m_climbTargetY = -1;
 
     Animator m_animator;
     StateMachine m_states;

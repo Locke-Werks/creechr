@@ -142,7 +142,53 @@ yet but are planned.)
   way safer (zero risk of orphaning an occluder window over a user app).
   add the occluder back in v0.4 once the rest of the rough edges are sanded.
 
-### v1.0 — he steals stuff out of webpages (with the extension)
+### v1.0 — he steals stuff out of webpages (with the extension) ← in progress
+
+WARNING: v1.0 is **not tagged** yet. the plumbing is in place; the
+runtime forwarding isn't. specifically:
+
+#### what's in the repo
+- `extension/` — manifest v3 chrome / edge extension. vanilla js, no
+  build step. service worker that connects to a native messaging host
+  named `com.creechr.bridge`. content script that walks the dom for
+  `<img>`, `<a href>`, `<button>`, `<li>`, gives each one a stable id,
+  and exposes scan/steal/restore functions. opt-in per tab via popup.
+- `install_extension_host.ps1` — registers the host in HKCU under
+  chrome and edge `NativeMessagingHosts`, pointing at a host json that
+  points at `build/creechr-bridge.exe`. you'll need to edit the
+  `allowed_origins` field with your real extension id after loading
+  the unpacked extension. yes that's annoying. yes it's MV3's fault.
+- `uninstall_extension_host.ps1` — undoes the above.
+- `creechr-bridge.exe` — second cmake target. console binary, pure
+  stdlib (no Qt), reads 4-byte length-prefix json messages on stdin,
+  writes the same on stdout. _binary mode_ on stdin/stdout because text
+  mode would translate CRLF inside the length prefix and corrupt every
+  message. logs every message to bridge.log.
+
+#### what's MISSING for v1.0 to actually work
+- the bridge currently REPLIES with a static `{"type":"ack",...}` to
+  every message instead of forwarding to the always-on creechr.exe.
+- there is no local named pipe (or http loopback, or shared memory,
+  or anything) between the bridge and the main pet. that's the next
+  thing to land. spec §7.1 wants a named pipe; either works.
+- there's no `ExtensionTargetProvider` on the c++ side yet, so even
+  with a working bridge the heist orchestrator wouldn't ask for dom
+  targets. easy add once the pipe exists.
+- the extension's `allowed_origins` host json field has a placeholder
+  extension id (`__YOUR_EXTENSION_ID_HERE__`) that needs hand-editing.
+  unavoidable: chrome generates the id from the extension's public
+  key on first load.
+
+#### what works end-to-end RIGHT NOW
+- you can build creechr.exe + creechr-bridge.exe
+- you can register the host with the powershell script
+- you can load the unpacked extension in chrome dev mode
+- you can opt a tab in via the popup
+- the background script will connect to com.creechr.bridge
+- the bridge will log incoming messages and reply with an ack
+- the dom side (scan, steal, restore) all run inside content.js when
+  asked, but no one's currently asking
+- nothing creechr-side reacts to any of it
 
 ## known issues
 

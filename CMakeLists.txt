@@ -25,6 +25,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
 add_executable(creechr WIN32
     src/main.cpp
+    src/app/creechr_app.h
+    src/app/creechr_app.cpp
+    src/app/tray_icon.h
+    src/app/tray_icon.cpp
 )
 
 target_compile_definitions(creechr PRIVATE

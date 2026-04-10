@@ -294,6 +294,7 @@ public:
                         if (w.height() < 64 || w.width() < 64) continue;
                         if (pos.x() < w.left() || pos.x() > w.right()) continue;
                         if (w.top() >= c.floorY() - 80) continue; // not high enough to be interesting
+                        if (w.top() < kSpriteHeight) continue;    // would clip his head off the top
                         if (w.top() < bestTop) {
                             bestTop = w.top();
                             bestIdx = i;
@@ -311,7 +312,13 @@ public:
                 // pick a random window. require some minimum size.
                 const int idx = QRandomGenerator::global()->bounded(world.windowRects.size());
                 const QRect& w = world.windowRects[idx];
-                if (w.height() >= 64 && w.width() >= 64) {
+                if (w.height() >= 64 && w.width() >= 64
+                    && w.top() >= kSpriteHeight) {
+                    // last clause: skip windows whose top is too high
+                    // to fit creechr above them. otherwise his sprite
+                    // ends up at y = w.top() - 48, which goes negative
+                    // for maximized windows and qt clips his head off.
+                    // long-standing readme issue, finally addressed.
                     const int leftDist  = qAbs(static_cast<int>(pos.x()) - w.left());
                     const int rightDist = qAbs(static_cast<int>(pos.x()) - w.right());
                     // 50% chance: gnaw on the nearer edge instead of
@@ -1246,6 +1253,11 @@ public:
     }
 };
 
+// HeistWait used to just sit there for 30-90s playing the idle anim,
+// which made it look like creechr forgot what he was doing. now he
+// actively GUARDS the stash with the same micro-behavior loop IdleState
+// uses, but with biting (gnaw at the loot) and gloating speech mixed
+// in. dragon-on-his-hoard vibe.
 class HeistWaitState : public State
 {
 public:
@@ -1255,17 +1267,83 @@ public:
     {
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("idle"));
+        c.speakRandom({
+            QStringLiteral("all mine"),
+            QStringLiteral("yes"),
+            QStringLiteral("good"),
+            QStringLiteral("yesss"),
+            QStringLiteral("delicious"),
+        }, 1700);
+        m_subMs = 0;
+        m_subThreshold = randomThreshold();
+        m_inBehavior = false;
     }
 
-    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext&) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
         if (QDateTime::currentMSecsSinceEpoch() >= h->returnAtMs) {
             return QStringLiteral("heist_return");
         }
+
+        // micro-behavior loop: same shape as IdleState's
+        if (m_inBehavior) {
+            if (c.animator().finished()) {
+                c.animator().setAnimation(QStringLiteral("idle"));
+                m_inBehavior = false;
+                m_subMs = 0;
+                m_subThreshold = randomThreshold();
+            }
+        } else {
+            m_subMs += deltaMs;
+            if (m_subMs >= m_subThreshold) {
+                fireGuardBehavior(c);
+            }
+        }
         return {};
     }
+
+private:
+    static int randomThreshold()
+    {
+        return 1300 + QRandomGenerator::global()->bounded(2200);
+    }
+
+    void fireGuardBehavior(Creechr& c)
+    {
+        const int roll = QRandomGenerator::global()->bounded(10);
+        if (roll < 4) {
+            // bite at the loot — most common, fits the vibe
+            c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+            m_inBehavior = true;
+        } else if (roll < 6) {
+            c.animator().setAnimation(QStringLiteral("blink"), /*reset*/true);
+            m_inBehavior = true;
+        } else if (roll < 8) {
+            // look around: flip facing direction
+            c.setFacingRight(!c.facingRight());
+            m_subMs = 0;
+            m_subThreshold = randomThreshold();
+        } else {
+            // gloat
+            c.speakRandom({
+                QStringLiteral("mine"),
+                QStringLiteral("ha"),
+                QStringLiteral("yes"),
+                QStringLiteral("hehe"),
+                QStringLiteral("nom"),
+                QStringLiteral("all mine"),
+                QStringLiteral("hngh"),
+            }, 1500);
+            m_subMs = 0;
+            m_subThreshold = randomThreshold();
+        }
+    }
+
+    int m_subMs = 0;
+    int m_subThreshold = 0;
+    bool m_inBehavior = false;
 };
 
 class HeistReturnState : public State

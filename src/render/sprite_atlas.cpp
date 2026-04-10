@@ -1,8 +1,10 @@
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
 
+#include <QByteArray>
 #include <QImage>
 #include <QPainter>
+#include <QRegularExpression>
 
 namespace cr {
 
@@ -15,7 +17,30 @@ namespace {
 constexpr int kCellW = kSpriteWidth;
 constexpr int kCellH = kSpriteHeight;
 
-const QColor kBody (220, 50, 140);   // creechr-pink
+// CREECHR_COLOR env var: accepts a few named presets ("pink"/"teal"/
+// "lime"/"orange"/"sky"/"violet") OR a hex color "#rrggbb". falls back
+// to creechr-pink if unset or unparseable. read once on first call.
+QColor parseBodyColorEnv()
+{
+    const QByteArray env = qgetenv("CREECHR_COLOR").toLower();
+    if (env.isEmpty()) return QColor(220, 50, 140);
+    if (env == "pink")    return QColor(220, 50, 140);
+    if (env == "teal")    return QColor( 30, 180, 170);
+    if (env == "lime")    return QColor(140, 210,  60);
+    if (env == "orange")  return QColor(240, 130,  40);
+    if (env == "sky")     return QColor( 80, 160, 230);
+    if (env == "violet")  return QColor(150,  80, 220);
+    if (env == "blood")   return QColor(180,  20,  20);
+    if (env == "moss")    return QColor( 90, 130,  60);
+    // hex like "#rrggbb"
+    if (env.size() == 7 && env.startsWith('#')) {
+        QColor c(QString::fromLatin1(env));
+        if (c.isValid()) return c;
+    }
+    return QColor(220, 50, 140);
+}
+
+const QColor kBody = parseBodyColorEnv();
 const QColor kInk  ( 20,  0,  15);   // outline / dark detail
 const QColor kEye  (255, 255, 255);
 const QColor kPupil(  0,   0,   0);
@@ -583,8 +608,9 @@ void SpriteAtlas::makePlaceholder()
     add("yawn",       { {0,13},{1,13},{2,13},{3,13},{4,13} },    140, false);
     add("scratch",    { {0,14},{1,14},{2,14},{3,14},{4,14} },    110, false);
 
-    LOG_INFO(QStringLiteral("sprite_atlas: placeholder atlas built (%1 anims, %2x%3 cells)")
-        .arg(m_anims.size()).arg(kCellW).arg(kCellH));
+    LOG_INFO(QStringLiteral("sprite_atlas: placeholder atlas built (%1 anims, %2x%3 cells, body=#%4)")
+        .arg(m_anims.size()).arg(kCellW).arg(kCellH)
+        .arg(kBody.name().mid(1)));
 }
 
 } // namespace cr

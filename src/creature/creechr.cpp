@@ -308,13 +308,17 @@ public:
             }
             if (pos.x() < leftLimit || pos.x() > rightLimit) {
                 // walked off the edge — go down. 40% chance he rappels
-                // down dramatically instead of climbing the wall.
+                // down dramatically instead of climbing the wall. the
+                // rappel anchor is HIS CURRENT POSITION (the corner of
+                // the window he was on), and the descend state will
+                // jump him off the edge with pendulum physics.
                 pos.setX(qBound<qreal>(leftLimit, pos.x(), rightLimit));
                 c.setPosition(pos);
                 const int floorBottom = world.virtualDesktop.bottom() - kSpriteHeight;
                 if (QRandomGenerator::global()->bounded(10) < 4) {
-                    c.setRappelAnchor(static_cast<int>(pos.x()),
-                                      world.virtualDesktop.bottom());
+                    const int anchorX = static_cast<int>(pos.x()) + kSpriteWidth / 2;
+                    const int anchorY = c.floorY() + kSpriteHeight - 2;
+                    c.setRappelAnchor(anchorX, anchorY);
                     return QStringLiteral("rappel_descend");
                 }
                 c.setClimbTarget(static_cast<int>(pos.x()), floorBottom);
@@ -352,9 +356,18 @@ public:
                     if (bestIdx >= 0
                         && (kForceRappel || QRandomGenerator::global()->bounded(10) < 4)) {
                         const QRect& w = world.windowRects[bestIdx];
-                        c.setRappelAnchor(static_cast<int>(pos.x()), w.top());
-                        LOG_DEBUG(QStringLiteral("walk: rappel target window %1 top=%2 (creechr y=%3)")
-                            .arg(bestIdx).arg(w.top()).arg(c.floorY()));
+                        // anchor offset: aim for one of the window's
+                        // top corners rather than directly above creechr,
+                        // so the climb has a diagonal rope and creechr
+                        // visibly swings on the way up. random pick
+                        // between left and right corner.
+                        const int leftCorner  = w.left();
+                        const int rightCorner = w.right();
+                        const int anchorX = (QRandomGenerator::global()->bounded(2) == 0)
+                            ? leftCorner : rightCorner;
+                        c.setRappelAnchor(anchorX, w.top());
+                        LOG_DEBUG(QStringLiteral("walk: rappel target window %1 top=%2 corner=%3 (creechr y=%4)")
+                            .arg(bestIdx).arg(w.top()).arg(anchorX).arg(c.floorY()));
                         return QStringLiteral("shoot_rappel");
                     }
                 }
@@ -565,6 +578,74 @@ public:
 // the visible rope is drawn by OverlayWindow, which checks
 // creechr.rappelActive() and reads creechr.rappelAnchorX/Y.
 
+// === rappel pendulum helpers ===
+//
+// the rope acts as a constraint: creechr's "hand point" (top-center of
+// his sprite, where the rope visually attaches) is at distance L from
+// the anchor. theta is the angle from straight-down measured at the
+// anchor. position from anchor is (L*sin(theta), L*cos(theta)).
+//
+// pendulum equation: theta'' = -(g/L) * sin(theta) - k * theta'
+// where k is angular damping (energy loss per swing).
+//
+// for the descend case L is fixed and the swing dampens out.
+// for the climb case L shrinks linearly (he's pulling himself up).
+namespace rappel {
+constexpr double kGravity        = 1500.0;
+constexpr double kDescendDamping = 0.55;
+constexpr double kClimbDamping   = 1.20;  // climbing tightens his grip
+constexpr double kClimbSpeed     = 95.0;  // L shrinks by this per second
+constexpr double kBounceLoss     = 0.45;  // wall bounce restitution
+constexpr double kHandOffsetY    = 4.0;   // rope attaches above his head a little
+
+QPointF handPoint(const Creechr& c)
+{
+    return QPointF(c.position().x() + kSpriteWidth / 2.0,
+                   c.position().y() + kHandOffsetY);
+}
+
+void positionFromTheta(Creechr& c, double L, double theta)
+{
+    const QPointF anchor(c.rappelAnchorX(), c.rappelAnchorY());
+    const double hx = anchor.x() + L * std::sin(theta);
+    const double hy = anchor.y() + L * std::cos(theta);
+    c.setPosition({ hx - kSpriteWidth / 2.0, hy - kHandOffsetY });
+}
+
+// is this window rect "the same" window the rope is anchored to?
+// we don't track the source window directly — heuristic: any of its
+// four corners is within 12 px of the anchor point.
+bool isAnchorWindow(const QRect& w, int ax, int ay)
+{
+    // dont call this lambda 'near' — windows.h #defines that as
+    // an empty token from the old fastcall calling convention era,
+    // and yes that's still in the headers in 2026, no i'm not joking
+    const int tol = 12;
+    auto closeTo = [&](int x, int y) {
+        return qAbs(x - ax) <= tol && qAbs(y - ay) <= tol;
+    };
+    return closeTo(w.left(),  w.top())
+        || closeTo(w.right(), w.top())
+        || closeTo(w.left(),  w.bottom())
+        || closeTo(w.right(), w.bottom());
+}
+
+// check if creechr's bbox at the proposed position intersects any
+// window other than the rope's source/target window. used for swing
+// collision detection in both rappel states.
+bool wallCollision(const QRect& bbox, const WorldContext& world,
+                   int anchorX, int anchorY)
+{
+    for (const QRect& w : world.windowRects) {
+        if (w.isEmpty()) continue;
+        if (isAnchorWindow(w, anchorX, anchorY)) continue;
+        if (w.intersects(bbox)) return true;
+    }
+    return false;
+}
+
+} // namespace rappel
+
 class ShootRappelState : public State
 {
 public:
@@ -579,6 +660,7 @@ public:
             QStringLiteral("weee"),
             QStringLiteral("here we go"),
             QStringLiteral("tally ho"),
+            QStringLiteral("hold tight"),
         }, 1400);
         m_phaseMs = 0;
     }
@@ -604,6 +686,11 @@ private:
     int m_phaseMs = 0;
 };
 
+// rappel UP: anchored at the target window's corner (probably off to
+// one side from creechr's current x). he hangs from the rope and
+// pulls himself up — L shrinks linearly with time. while shrinking,
+// pendulum physics make him swing. high damping so he doesnt do
+// wild laps around the anchor.
 class RappelClimbState : public State
 {
 public:
@@ -611,55 +698,180 @@ public:
 
     void enter(Creechr& c, const WorldContext&) override
     {
-        c.setVelocity({ 0, -200 });
+        c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("climb_up"));
+        const QPointF anchor(c.rappelAnchorX(), c.rappelAnchorY());
+        const QPointF hand = rappel::handPoint(c);
+        const double dx = hand.x() - anchor.x();
+        const double dy = hand.y() - anchor.y();
+        m_L = std::sqrt(dx * dx + dy * dy);
+        if (m_L < 30.0) m_L = 30.0;
+        m_theta = std::atan2(dx, dy); // angle from straight-down
+        m_thetaVel = 0.0;
     }
 
-    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         const double dt = deltaMs / 1000.0;
-        QPointF pos = c.position() + c.velocity() * dt;
-        // creechr's "feet" land at anchorY - kSpriteHeight (so his
-        // foot y = anchorY which is the platform top)
-        const int targetTopLeftY = c.rappelAnchorY() - kSpriteHeight;
-        if (pos.y() <= targetTopLeftY) {
-            pos.setY(targetTopLeftY);
-            c.setPosition(pos);
-            c.setFloorY(targetTopLeftY);
+
+        // pull the rope in
+        m_L -= rappel::kClimbSpeed * dt;
+        if (m_L < 14.0) {
+            // arrived at the anchor — snap to a position where his
+            // feet are at anchor.y (top of the target window)
+            const int feetY = c.rappelAnchorY() - kSpriteHeight;
+            c.setPosition({ static_cast<double>(c.rappelAnchorX() - kSpriteWidth / 2),
+                            static_cast<double>(feetY) });
+            c.setFloorY(feetY);
             c.clearRappelAnchor();
             return QStringLiteral("walk");
         }
-        c.setPosition(pos);
+
+        // pendulum integration
+        const double aTheta = -(rappel::kGravity / m_L) * std::sin(m_theta)
+                              - rappel::kClimbDamping * m_thetaVel;
+        m_thetaVel += aTheta * dt;
+        m_theta    += m_thetaVel * dt;
+
+        // candidate position
+        const QPointF anchor(c.rappelAnchorX(), c.rappelAnchorY());
+        const double hx = anchor.x() + m_L * std::sin(m_theta);
+        const double hy = anchor.y() + m_L * std::cos(m_theta);
+        const QRect bbox(static_cast<int>(hx - kSpriteWidth / 2.0),
+                         static_cast<int>(hy - rappel::kHandOffsetY),
+                         kSpriteWidth, kSpriteHeight);
+
+        if (rappel::wallCollision(bbox, world,
+                                  c.rappelAnchorX(), c.rappelAnchorY())) {
+            // bounce — reverse angular velocity with restitution
+            m_thetaVel = -m_thetaVel * rappel::kBounceLoss;
+            c.spawnPuff(QPointF(hx, hy), 3, QColor(180, 170, 165, 200), 280);
+        } else {
+            rappel::positionFromTheta(c, m_L, m_theta);
+        }
         return {};
     }
+
+private:
+    double m_L = 100.0;
+    double m_theta = 0.0;
+    double m_thetaVel = 0.0;
 };
 
+// rappel DOWN: anchored where creechr was when he jumped off the edge
+// of a window. two phases:
+//   FreeFall: he leaps off the edge with some lateral velocity, falls
+//     freely until the rope pulls taut at L_max
+//   Pendulum: constrained pendulum swing. damps out over time. wall
+//     collisions reflect angular velocity. exits when his feet reach
+//     the screen floor.
 class RappelDescendState : public State
 {
 public:
     QString name() const override { return QStringLiteral("rappel_descend"); }
 
-    void enter(Creechr& c, const WorldContext&) override
+    void enter(Creechr& c, const WorldContext& world) override
     {
-        c.setVelocity({ 0, 240 });
-        c.animator().setAnimation(QStringLiteral("climb_down"));
+        c.animator().setAnimation(QStringLiteral("hang"));
+        c.speakRandom({
+            QStringLiteral("weeeee"),
+            QStringLiteral("down i go"),
+            QStringLiteral("geronimo"),
+            QStringLiteral("yeehaw"),
+            QStringLiteral("LOOK OUT"),
+            QStringLiteral("descending"),
+        }, 1700);
+
+        const int anchorX = c.rappelAnchorX();
+        const int anchorY = c.rappelAnchorY();
+        const int floorY  = world.virtualDesktop.bottom() - kSpriteHeight;
+        // rope length: distance from anchor down to where his feet
+        // would touch the floor when hanging straight down. minimum 80.
+        m_L = static_cast<double>(qMax(80, floorY - anchorY - 4));
+
+        // jump off! initial position right next to the anchor, lateral
+        // velocity in his current facing direction.
+        const double dirSign = c.facingRight() ? 1.0 : -1.0;
+        c.setPosition({ static_cast<double>(anchorX - kSpriteWidth / 2)
+                        + dirSign * 6.0,
+                        static_cast<double>(anchorY) });
+        c.setVelocity({ dirSign * 90.0, 40.0 });
+        m_phase = Phase::FreeFall;
+        m_thetaVel = 0.0;
+        m_theta = 0.0;
     }
 
-    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         const double dt = deltaMs / 1000.0;
-        QPointF pos = c.position() + c.velocity() * dt;
-        const int targetTopLeftY = c.rappelAnchorY() - kSpriteHeight;
-        if (pos.y() >= targetTopLeftY) {
-            pos.setY(targetTopLeftY);
+        const QPointF anchor(c.rappelAnchorX(), c.rappelAnchorY());
+
+        if (m_phase == Phase::FreeFall) {
+            QPointF vel = c.velocity();
+            QPointF pos = c.position() + vel * dt;
+            vel.setY(vel.y() + rappel::kGravity * dt);
+            c.setVelocity(vel);
             c.setPosition(pos);
-            c.setFloorY(targetTopLeftY);
-            c.clearRappelAnchor();
-            return QStringLiteral("walk");
+
+            // is the rope taut yet?
+            const QPointF hand = rappel::handPoint(c);
+            const double dx = hand.x() - anchor.x();
+            const double dy = hand.y() - anchor.y();
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            if (dist >= m_L) {
+                // snap onto the constraint surface and convert linear
+                // velocity to angular
+                m_theta = std::atan2(dx, dy);
+                // tangent direction at angle theta is (cos, -sin)
+                const double tangX =  std::cos(m_theta);
+                const double tangY = -std::sin(m_theta);
+                const double tangSpeed = vel.x() * tangX + vel.y() * tangY;
+                m_thetaVel = tangSpeed / m_L;
+                m_phase = Phase::Pendulum;
+                rappel::positionFromTheta(c, m_L, m_theta);
+                c.setVelocity({ 0, 0 });
+            }
+        } else {
+            // PENDULUM
+            const double aTheta = -(rappel::kGravity / m_L) * std::sin(m_theta)
+                                  - rappel::kDescendDamping * m_thetaVel;
+            m_thetaVel += aTheta * dt;
+            m_theta    += m_thetaVel * dt;
+
+            const double hx = anchor.x() + m_L * std::sin(m_theta);
+            const double hy = anchor.y() + m_L * std::cos(m_theta);
+            const QRect bbox(static_cast<int>(hx - kSpriteWidth / 2.0),
+                             static_cast<int>(hy - rappel::kHandOffsetY),
+                             kSpriteWidth, kSpriteHeight);
+
+            if (rappel::wallCollision(bbox, world,
+                                      c.rappelAnchorX(), c.rappelAnchorY())) {
+                m_thetaVel = -m_thetaVel * rappel::kBounceLoss;
+                c.spawnPuff(QPointF(hx, hy), 4, QColor(180, 170, 165, 200), 320);
+            } else {
+                rappel::positionFromTheta(c, m_L, m_theta);
+            }
+
+            // landing condition: foot y reaches the screen floor.
+            // happens at the bottom of the swing (theta near 0).
+            const int floorY = world.virtualDesktop.bottom() - kSpriteHeight;
+            if (c.position().y() >= floorY - 2) {
+                c.setPosition({ c.position().x(), static_cast<double>(floorY) });
+                c.setFloorY(floorY);
+                c.setVelocity({ 0, 0 });
+                c.clearRappelAnchor();
+                return QStringLiteral("walk");
+            }
         }
-        c.setPosition(pos);
         return {};
     }
+
+private:
+    enum class Phase { FreeFall, Pendulum };
+    Phase m_phase = Phase::FreeFall;
+    double m_L = 100.0;
+    double m_theta = 0.0;
+    double m_thetaVel = 0.0;
 };
 
 // === gnaw / flung states ===

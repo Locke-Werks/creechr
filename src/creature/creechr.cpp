@@ -27,6 +27,34 @@ namespace cr {
 
 namespace {
 
+// is creechr currently standing on a real platform? "platform" means
+// either the screen floor OR a window whose top is roughly at his
+// foot y AND whose x-range contains him. when standing on a window,
+// the actual current top is fed back via outNewFloorY so the caller
+// can RIDE the window if it shifted a few pixels (window manager snap,
+// user dragging the title bar, etc).
+//
+// returns false when the platform vanished out from under him —
+// caller should transition to flung. this is the gravity-from-loss-
+// of-support path.
+bool hasPlatformUnder(const Creechr& c, const WorldContext& world, int* outNewFloorY = nullptr)
+{
+    const int floorY = c.floorY();
+    if (floorY >= world.virtualDesktop.bottom() - (kSpriteHeight + 1)) {
+        if (outNewFloorY) *outNewFloorY = floorY;
+        return true;
+    }
+    const int feetY = floorY + kSpriteHeight;
+    const int x = static_cast<int>(c.position().x());
+    for (const QRect& w : world.windowRects) {
+        if (qAbs(w.top() - feetY) <= 8 && w.left() <= x && x <= w.right()) {
+            if (outNewFloorY) *outNewFloorY = w.top() - kSpriteHeight;
+            return true;
+        }
+    }
+    return false;
+}
+
 // pause-the-walk-for-a-bit. 1-3s of standing around looking shifty.
 class IdleState : public State
 {
@@ -43,6 +71,20 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
+        // platform check first — if the window he was standing on
+        // closed or moved out from under him, fall.
+        int rideY = 0;
+        if (!hasPlatformUnder(c, world, &rideY)) {
+            c.setVelocity({ 0, 0 });
+            return QStringLiteral("flung");
+        }
+        if (rideY != c.floorY()) {
+            c.setFloorY(rideY);
+            QPointF p = c.position();
+            p.setY(rideY);
+            c.setPosition(p);
+        }
+
         // pending heist takes priority over EVERYTHING else, including
         // sleep. otherwise the orchestrator can queue a heist and
         // creechr will just nap on top of it.
@@ -98,6 +140,22 @@ public:
 
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
+        // platform check first. if the window he was walking on closed
+        // or moved out from under him, drop into flung. if it moved a
+        // few pixels, RIDE it.
+        int rideY = 0;
+        if (!hasPlatformUnder(c, world, &rideY)) {
+            // damp horizontal velocity so he doesnt fly off in a sprint
+            c.setVelocity({ c.velocity().x() * 0.5, 0 });
+            return QStringLiteral("flung");
+        }
+        if (rideY != c.floorY()) {
+            c.setFloorY(rideY);
+            QPointF p = c.position();
+            p.setY(rideY);
+            c.setPosition(p);
+        }
+
         if (world.msSinceLastInput > 30000) {
             return QStringLiteral("sleep");
         }

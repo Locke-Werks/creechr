@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>creechr</title>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            font-size: 12px;
+            color: #ddd;
+            background: #1e1e1e;
+            margin: 0;
+            padding: 12px;
+            min-width: 220px;
+        }
+        h1 { font-size: 14px; margin: 0 0 8px 0; }
+        button {
+            display: block;
+            width: 100%;
+            padding: 8px;
+            margin-top: 8px;
+            background: #d63286;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover { background: #e84b9a; }
+        .status { margin-top: 8px; font-size: 11px; opacity: 0.8; }
+        .warn   { color: #f88; }
+    </style>
+</head>
+<body>
+    <h1>creechr companion</h1>
+    <p>let the desktop pet poke at this tab? he'll only steal little
+    visual things and he always puts them back. probably.</p>
+    <button id="toggle">checking…</button>
+    <div class="status" id="status"></div>
+    <p class="warn">don't enable this on your bank.</p>
+    <script src="popup.js"></script>
+</body>
+</html>

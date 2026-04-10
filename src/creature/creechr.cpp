@@ -948,6 +948,20 @@ public:
     {
         m_elapsedMs = 0;
         if (!c.heist()) return;
+        // announce intent the moment the heist visibly starts. user
+        // gets feedback that creechr has decided to commit a crime.
+        c.speakRandom({
+            QStringLiteral("ooh"),
+            QStringLiteral("i want that one"),
+            QStringLiteral("mine soon"),
+            QStringLiteral("brb"),
+            QStringLiteral("oh thats nice"),
+            QStringLiteral("hehehe"),
+            QStringLiteral("perfect"),
+            QStringLiteral("dont mind me"),
+            QStringLiteral("this looks important"),
+            QStringLiteral("sneaky time"),
+        }, 1700);
         const QRect& f = c.heist()->target.screenRect;
         const int targetX = nearerEdge(static_cast<int>(c.position().x()),
                                        f.left() - 4, f.right() + 4);

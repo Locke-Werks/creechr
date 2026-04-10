@@ -55,6 +55,8 @@ add_executable(creechr WIN32
     src/targets/window_target_provider.cpp
     src/targets/cursor_target_provider.h
     src/targets/cursor_target_provider.cpp
+    src/targets/uia_target_provider.h
+    src/targets/uia_target_provider.cpp
     src/util/logging.h
     src/util/logging.cpp
     src/util/dpi.h

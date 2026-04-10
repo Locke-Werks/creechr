@@ -46,6 +46,10 @@ add_executable(creechr WIN32
     src/world/window_geometry.cpp
     src/world/fullscreen_detector.h
     src/world/fullscreen_detector.cpp
+    src/heist/hoard.h
+    src/heist/hoard.cpp
+    src/heist/bitmap_capture.h
+    src/heist/bitmap_capture.cpp
     src/util/logging.h
     src/util/logging.cpp
     src/util/dpi.h

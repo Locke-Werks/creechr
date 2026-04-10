@@ -386,7 +386,7 @@ public:
                 return;
             }
             h->originalFrame = h->target.screenRect;
-            h->carriedPixmap = pm;
+            h->carriedPixmap = capture::fitForCarry(pm);
             m_capturedOk = true;
             LOG_INFO(QStringLiteral("heist: pre-captured uia element %1").arg(h->target.label));
         }
@@ -400,7 +400,7 @@ public:
                 return;
             }
             h->originalFrame = h->target.screenRect;
-            h->carriedPixmap = pm;
+            h->carriedPixmap = capture::fitForCarry(pm);
             if (auto* ext = c.extensionProvider()) {
                 // make sure no stale ack from a prior cycle is sitting around
                 ext->consumeStealAck(h->target.opaqueId);
@@ -429,10 +429,16 @@ public:
             GetWindowRect(hwnd, &r);
             h->originalFrame = QRect(QPoint(r.left, r.top),
                                      QPoint(r.right - 1, r.bottom - 1));
-            h->carriedPixmap = pm;
+            // shrink to creechr's hand size BEFORE storing. captureWindow
+            // returns the full window pixmap (often 800px+) which made
+            // the carried bitmap loom over the entire desktop. that was
+            // funny but not the look we're going for. fitForCarry caps
+            // at 64x48 preserving aspect ratio.
+            h->carriedPixmap = capture::fitForCarry(pm);
             m_capturedOk = true;
-            LOG_INFO(QStringLiteral("heist: pre-captured %1 (%2x%3)")
-                .arg(h->target.label).arg(pm.width()).arg(pm.height()));
+            LOG_INFO(QStringLiteral("heist: pre-captured %1 (orig %2x%3, carry %4x%5)")
+                .arg(h->target.label).arg(pm.width()).arg(pm.height())
+                .arg(h->carriedPixmap.width()).arg(h->carriedPixmap.height()));
 #endif
         } else if (h->target.kind == TargetKind::Cursor) {
             h->originalFrame = h->target.screenRect;

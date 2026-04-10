@@ -22,4 +22,11 @@ QPixmap captureWindow(CrHwnd hwnd);
 // BitBlt of a screen rect. always works for visible pixels.
 QPixmap captureScreenRect(const QRect& rect);
 
+// scale a captured pixmap to something creechr can plausibly carry in
+// his hands without dwarfing the entire screen. preserves aspect ratio.
+// caps at ~64x48 logical pixels (about creechr's own bounding box). if
+// the source is already small (uia element, dom button), returns it
+// unchanged. used by the heist grab states.
+QPixmap fitForCarry(const QPixmap& src);
+
 } // namespace cr::capture

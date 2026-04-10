@@ -101,4 +101,15 @@ QPixmap captureScreenRect(const QRect&)    { return {}; }
 
 #endif
 
+QPixmap fitForCarry(const QPixmap& src)
+{
+    if (src.isNull()) return src;
+    constexpr int kMaxW = 64;
+    constexpr int kMaxH = 48;
+    if (src.width() <= kMaxW && src.height() <= kMaxH) {
+        return src;
+    }
+    return src.scaled(kMaxW, kMaxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 } // namespace cr::capture

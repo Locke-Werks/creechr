@@ -44,8 +44,12 @@ add_executable(creechr WIN32
     src/world/window_enumerator.cpp
     src/world/window_geometry.h
     src/world/window_geometry.cpp
+    src/world/fullscreen_detector.h
+    src/world/fullscreen_detector.cpp
     src/util/logging.h
     src/util/logging.cpp
+    src/util/dpi.h
+    src/util/dpi.cpp
 )
 
 target_compile_definitions(creechr PRIVATE

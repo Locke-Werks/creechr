@@ -5,6 +5,7 @@
 #include "render/overlay_window.h"
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
+#include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
 
 #include <QByteArray>
@@ -53,6 +54,8 @@ void CreechrApp::start()
 #ifdef _WIN32
     m_windows->setSelfHwnd(reinterpret_cast<HWND>(m_overlay->winId()));
 #endif
+
+    m_fullscreen = std::make_unique<cr::FullscreenDetector>();
 
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
@@ -158,6 +161,23 @@ void CreechrApp::onLogicTick()
     world.msSinceLastInput = g_idle.sample(now);
     if (m_windows) {
         world.windowRects = m_windows->snapshotRects();
+    }
+    if (m_fullscreen) {
+        world.fullscreenActive = m_fullscreen->isFullscreenActive();
+    }
+
+    // hide the overlay when a fullscreen game/presentation is going.
+    // we'll show it again when the user comes back.
+    if (m_overlay) {
+        const bool wantVisible = !world.fullscreenActive;
+        if (wantVisible != m_overlay->isVisible()) {
+            if (wantVisible) {
+                m_overlay->show();
+            } else {
+                m_overlay->hide();
+                LOG_INFO(QStringLiteral("fullscreen detected, hiding overlay"));
+            }
+        }
     }
 
     m_creechr->tickLogic(dt, world);

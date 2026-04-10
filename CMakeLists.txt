@@ -105,3 +105,29 @@ target_link_libraries(creechr PRIVATE
 set_target_properties(creechr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# === creechr-bridge.exe ===
+# tiny console binary that chrome / edge spawn via native messaging.
+# speaks 4-byte-length-prefix json on stdin/stdout, forwards messages
+# to the always-on creechr.exe over a local named pipe (eventually).
+# subsystem is console because nm hosts MUST have a stdin/stdout pipe
+# attached, and qt is not linked because the bridge is pure stdlib.
+add_executable(creechr-bridge
+    src/ipc/creechr_bridge_main.cpp
+)
+target_compile_definitions(creechr-bridge PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    UNICODE
+    _UNICODE
+)
+target_compile_options(creechr-bridge PRIVATE
+    /W4
+    /permissive-
+    /Zc:__cplusplus
+    /utf-8
+    /EHsc
+)
+set_target_properties(creechr-bridge PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)

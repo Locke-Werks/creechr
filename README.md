@@ -67,13 +67,23 @@ he's being a little shit. either way works.
 (this section gets updated each release. things below the line aren't built
 yet but are planned.)
 
-### v0.1 — he exists and he walks
-- transparent overlay across all monitors
-- walks along the bottom of the desktop and the tops of windows
-- climbs vertical window edges
-- naps after a while of you not touching the mouse
-- wakes up when you do
-- knows to hide during fullscreen apps so he doesn't ruin your movie
+### v0.1 — he exists and he walks ← you are here
+- transparent click-through overlay covers the whole virtual desktop
+- per-monitor v2 dpi awareness on the process so he doesn't get scaled
+  out from under us by windows
+- walks along the bottom of the desktop, bouncing off the screen edges
+- picks a random nearby window every few seconds and walks over to it,
+  climbs up the side, walks across the top, climbs back down
+- minimized / cloaked / off-screen / shell windows are filtered out so
+  he doesn't try to climb something that doesn't visually exist
+- naps after 30 seconds of you not touching the mouse
+- one twitch of the cursor wakes him up
+- detects fullscreen games and presentations (via SHQueryUserNotificationState)
+  and hides the overlay so he doesn't crash your movie night
+- tray icon: right click for pause/resume and quit. pause genuinely
+  stops the tick timers, not just no-ops them, before you ask.
+- logs to %LOCALAPPDATA%\creechr\creechr\creechr.log (rotated at 1MB,
+  3 files kept). set CREECHR_LOG_LEVEL=debug if you want the chatty stuff.
 
 ### v0.2 — he steals small windows and the cursor
 ### v0.3 — he steals individual ui controls (best effort)
@@ -81,14 +91,20 @@ yet but are planned.)
 
 ## known issues
 
-- multi-monitor with mixed dpi scaling is a war zone. some of his sprite
-  positions will be off by a few pixels until i sit down with a real
-  multi-monitor rig and fix it properly.
-- if you alt-tab to a fullscreen game during a heist he'll just freeze
-  in place mid-carry. when you tab back he picks up where he left off.
-  i'm not sure if that's a bug or my favorite feature.
+- multi-monitor with mixed dpi scaling is a war zone. WindowEnumerator
+  divides DWM physical pixels by the PRIMARY screen's devicePixelRatio,
+  which is wrong if your secondary monitor has a different scale. on a
+  single-monitor box it just works. fixing this properly is a v0.2-or
+  -later thing because it'll need per-monitor lookups via MonitorFromWindow.
+- the placeholder sprite is a 32x32 magenta blob with eyes. real art
+  exists in my head. don't @ me.
+- when creechr climbs a window that's positioned at y < 32 (eg. a
+  maximized window), the sprite renders with negative y coords and qt
+  clips it. you'll see his head pop above the screen. fix is to clamp
+  the climb destination to >= 0.
+- idle behaviors (blink, yawn, look around) are not in v0.1. he just
+  stands there during idle. it makes him look constipated. v0.2.
 - right click menus from other apps sometimes draw on top of him. fine.
-- the placeholder sprite is a colored blob. real art is coming. don't @ me.
 
 ## license
 

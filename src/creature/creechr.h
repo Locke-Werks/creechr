@@ -11,6 +11,8 @@
 #include <QPoint>
 #include <QPointF>
 #include <QRect>
+#include <QString>
+#include <QStringList>
 #include <optional>
 
 namespace cr {
@@ -100,6 +102,13 @@ public:
     void setRappelAnchor(int x, int y) { m_rappelAnchorX = x; m_rappelAnchorY = y; }
     void clearRappelAnchor() { m_rappelAnchorX = -1; m_rappelAnchorY = -1; }
 
+    // speech: a small one-line text bubble drawn near creechr's head.
+    // states call speak() to set one. it auto-clears at expiry. the
+    // overlay reads currentSpeech() each frame and draws if non-empty.
+    void speak(const QString& text, int durationMs = 1800);
+    void speakRandom(const QStringList& options, int durationMs = 1800);
+    QString currentSpeech() const; // empty if no active speech
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -133,6 +142,8 @@ private:
     void* m_gnawHwnd = nullptr;
     int m_rappelAnchorX = -1;
     int m_rappelAnchorY = -1;
+    QString m_speechText;
+    qint64 m_speechExpiryMs = 0;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

@@ -149,4 +149,43 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
         }
         p.drawPixmap(where - widgetOrigin, h->carriedPixmap);
     }
+
+    // speech bubble. small white rounded rect with dark border, drawn
+    // above creechr's head. text is whatever he's currently muttering;
+    // currentSpeech() auto-expires.
+    const QString speech = m_creechr->currentSpeech();
+    if (!speech.isEmpty()) {
+        QFont f = p.font();
+        f.setPointSize(9);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const int textW = fm.horizontalAdvance(speech);
+        const int textH = fm.height();
+        const int padX = 6;
+        const int padY = 3;
+        const int bubW = textW + padX * 2;
+        const int bubH = textH + padY * 2;
+        // anchor: just above his head, slightly offset toward his
+        // facing direction so it doesnt cover his face
+        const int cx = static_cast<int>(m_creechr->position().x()) + 24;
+        const int cy = static_cast<int>(m_creechr->position().y()) - 6;
+        const QRect bubble(cx - bubW / 2, cy - bubH, bubW, bubH);
+        const QRect bubbleLocal = bubble.translated(-widgetOrigin);
+
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setBrush(QColor(255, 255, 255, 240));
+        p.setPen(QPen(QColor(20, 0, 15), 1));
+        p.drawRoundedRect(bubbleLocal, 4, 4);
+        // little tail pointing down toward creechr's head
+        const int tailX = bubbleLocal.center().x();
+        const int tailTop = bubbleLocal.bottom();
+        p.drawLine(tailX - 3, tailTop, tailX, tailTop + 4);
+        p.drawLine(tailX + 3, tailTop, tailX, tailTop + 4);
+
+        p.setPen(QColor(20, 0, 15));
+        p.drawText(bubbleLocal.adjusted(padX, padY, -padX, -padY),
+                   Qt::AlignCenter, speech);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
 }

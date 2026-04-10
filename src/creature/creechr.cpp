@@ -132,15 +132,30 @@ private:
     void fireMicroBehavior(Creechr& c)
     {
         const int roll = QRandomGenerator::global()->bounded(10);
-        if (roll < 5) {
-            // blink — most common
+        if (roll < 4) {
             c.animator().setAnimation(QStringLiteral("blink"), /*reset*/true);
-        } else if (roll < 8) {
-            // scratch
+        } else if (roll < 7) {
             c.animator().setAnimation(QStringLiteral("scratch"), /*reset*/true);
-        } else {
-            // yawn — least common, the longest one
+        } else if (roll < 9) {
             c.animator().setAnimation(QStringLiteral("yawn"), /*reset*/true);
+        } else {
+            // 10% chance: just say something instead of animating.
+            // doesnt set m_inBehavior because there's no anim to wait
+            // for — return early.
+            const QStringList lines = {
+                QStringLiteral("ugh."),
+                QStringLiteral("..."),
+                QStringLiteral("hi"),
+                QStringLiteral("bored"),
+                QStringLiteral("feed me"),
+                QStringLiteral("this place sucks"),
+                QStringLiteral("hmm"),
+                QStringLiteral("mine"),
+                QStringLiteral("where am i"),
+                QStringLiteral("what"),
+            };
+            c.speakRandom(lines, 1600);
+            return;
         }
         m_inBehavior = true;
     }
@@ -499,6 +514,12 @@ public:
     {
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+        c.speakRandom({
+            QStringLiteral("up i go"),
+            QStringLiteral("weee"),
+            QStringLiteral("here we go"),
+            QStringLiteral("tally ho"),
+        }, 1400);
         m_phaseMs = 0;
     }
 
@@ -648,6 +669,14 @@ public:
     {
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+        c.speakRandom({
+            QStringLiteral("om nom"),
+            QStringLiteral("crunch"),
+            QStringLiteral("delicious"),
+            QStringLiteral("this is mine now"),
+            QStringLiteral("nom nom"),
+            QStringLiteral("hngh"),
+        }, 1500);
         m_durationMs = 0;
         m_signChanges = 0;
         m_shakeWindowMs = 0;
@@ -763,6 +792,15 @@ public:
         // velocity was set by whoever flung him. set animation to hang
         // (arms up) which reads as flailing.
         c.animator().setAnimation(QStringLiteral("hang"));
+        c.speakRandom({
+            QStringLiteral("OW"),
+            QStringLiteral("DICK"),
+            QStringLiteral("aaaa"),
+            QStringLiteral("fuck"),
+            QStringLiteral("HEY"),
+            QStringLiteral("rude"),
+            QStringLiteral("WHY"),
+        }, 2200);
         m_settledFrames = 0;
     }
 
@@ -900,6 +938,14 @@ public:
         m_phase = Phase::Grabbing;
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+        c.speakRandom({
+            QStringLiteral("yoink"),
+            QStringLiteral("MINE"),
+            QStringLiteral("got it"),
+            QStringLiteral("ha"),
+            QStringLiteral("gotcha"),
+            QStringLiteral("haha"),
+        }, 1400);
 
         HeistContext* h = c.heist();
         if (!h) return;
@@ -1371,6 +1417,26 @@ QRect Creechr::drawRect() const
 QRect Creechr::frameSrcRect() const
 {
     return m_animator.currentFrameRect();
+}
+
+void Creechr::speak(const QString& text, int durationMs)
+{
+    m_speechText = text;
+    m_speechExpiryMs = QDateTime::currentMSecsSinceEpoch() + durationMs;
+}
+
+void Creechr::speakRandom(const QStringList& options, int durationMs)
+{
+    if (options.isEmpty()) return;
+    const int idx = QRandomGenerator::global()->bounded(options.size());
+    speak(options[idx], durationMs);
+}
+
+QString Creechr::currentSpeech() const
+{
+    if (m_speechText.isEmpty()) return {};
+    if (QDateTime::currentMSecsSinceEpoch() >= m_speechExpiryMs) return {};
+    return m_speechText;
 }
 
 QPoint Creechr::carryAnchorScreen() const

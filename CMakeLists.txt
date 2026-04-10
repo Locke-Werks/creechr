@@ -31,6 +31,10 @@ add_executable(creechr WIN32
     src/app/tray_icon.cpp
     src/render/overlay_window.h
     src/render/overlay_window.cpp
+    src/render/sprite_atlas.h
+    src/render/sprite_atlas.cpp
+    src/render/animator.h
+    src/render/animator.cpp
     src/util/logging.h
     src/util/logging.cpp
 )

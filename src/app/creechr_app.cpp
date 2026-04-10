@@ -25,6 +25,10 @@ namespace {
 // at the top of the file so the tray-menu helper functions can also
 // see it (they fire heists from outside the tick loop).
 cr::WorldContext g_cachedWorld;
+// previous snapshot's window positions, indexed by hwnd. used to
+// compute the windowDeltas field each refresh. cleared when an hwnd
+// drops out of the snapshot (window closed).
+QHash<void*, QPoint> g_prevWindowPositions;
 } // namespace
 
 #include <QByteArray>
@@ -231,16 +235,31 @@ void CreechrApp::onTick()
             // single snapshot call, then split into parallel rect+hwnd
             // vectors. the gnaw state needs hwnds so it can talk to
             // dwm directly each tick (10Hz cache is too coarse for
-            // smooth window-following).
+            // smooth window-following). also computes per-window
+            // deltas since the previous snapshot so the drag-chase
+            // detection in WalkState has something to look at.
             const auto full = m_windows->snapshot();
             g_cachedWorld.windowRects.clear();
             g_cachedWorld.windowHwnds.clear();
+            g_cachedWorld.windowDeltas.clear();
             g_cachedWorld.windowRects.reserve(full.size());
             g_cachedWorld.windowHwnds.reserve(full.size());
+            g_cachedWorld.windowDeltas.reserve(full.size());
+            QHash<void*, QPoint> nextPrev;
+            nextPrev.reserve(full.size());
             for (const auto& wi : full) {
+                void* hwndPtr = reinterpret_cast<void*>(wi.hwnd);
                 g_cachedWorld.windowRects.push_back(wi.frame);
-                g_cachedWorld.windowHwnds.push_back(reinterpret_cast<void*>(wi.hwnd));
+                g_cachedWorld.windowHwnds.push_back(hwndPtr);
+                QPoint delta(0, 0);
+                if (auto it = g_prevWindowPositions.find(hwndPtr);
+                    it != g_prevWindowPositions.end()) {
+                    delta = wi.frame.topLeft() - it.value();
+                }
+                g_cachedWorld.windowDeltas.push_back(delta);
+                nextPrev.insert(hwndPtr, wi.frame.topLeft());
             }
+            g_prevWindowPositions = std::move(nextPrev);
         }
         if (m_fullscreen) g_cachedWorld.fullscreenActive = m_fullscreen->isFullscreenActive();
     }
@@ -312,6 +331,38 @@ void CreechrApp::onTick()
             m_creechr->beginHeist(*target);
         } else {
             LOG_INFO(QStringLiteral("orchestrator: %1 attempt found no target").arg(whichRoll));
+        }
+    }
+
+    // window-drag noticing: when the user drags a window quickly,
+    // creechr says something and turns to face it. distinct from
+    // gnaw's shake-detection (which only fires while ATTACHED to a
+    // window). this fires when he's just walking around and notices
+    // someone fling a window across the screen. 4-second cooldown.
+    if (m_creechr && (now - m_lastDragReactMs) > 4000
+        && (m_creechr->stateMachine().currentName() == QLatin1String("walk")
+            || m_creechr->stateMachine().currentName() == QLatin1String("idle"))) {
+        for (int i = 0; i < g_cachedWorld.windowDeltas.size(); ++i) {
+            const QPoint d = g_cachedWorld.windowDeltas[i];
+            const int mag = qAbs(d.x()) + qAbs(d.y());
+            if (mag < 35) continue; // not fast enough — ~350 px/sec at 10Hz
+            // also require the window to be reasonably nearby in x
+            const QRect& r = g_cachedWorld.windowRects[i];
+            if (qAbs(r.center().x() - static_cast<int>(m_creechr->position().x())) > 600) continue;
+
+            m_lastDragReactMs = now;
+            m_creechr->setFacingRight(r.center().x() >= m_creechr->position().x());
+            static const QStringList kDragLines = {
+                QStringLiteral("HEY"),
+                QStringLiteral("wait"),
+                QStringLiteral("come back"),
+                QStringLiteral("oh no you dont"),
+                QStringLiteral("WHERE"),
+                QStringLiteral("rude"),
+                QStringLiteral("stop"),
+            };
+            m_creechr->speakRandom(kDragLines, 1600);
+            break;
         }
     }
 

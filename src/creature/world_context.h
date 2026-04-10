@@ -27,6 +27,11 @@ struct WorldContext {
     // (heist + gnaw states in creechr.cpp) reinterpret_casts to HWND.
     QVector<QRect>  windowRects;
     QVector<void*>  windowHwnds;
+    // per-window position delta since the previous snapshot (~100ms
+    // ago in the cached-world refresh). zero for windows that didnt
+    // exist last tick or didnt move. large values mean the user is
+    // currently DRAGGING that window, which creechr can react to.
+    QVector<QPoint> windowDeltas;
 
     // is the user in a fullscreen game / presentation? if true the
     // overlay should hide and the creature should just freeze.

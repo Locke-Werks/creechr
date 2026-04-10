@@ -68,6 +68,7 @@ private:
     std::unique_ptr<cr::Hoard> m_hoard;
     qint64 m_lastHeistAttemptMs = 0;
     qint64 m_lastNoticedMs = 0;
+    qint64 m_lastDragReactMs = 0;
     QTimer* m_tickTimer = nullptr;
     qint64 m_lastTickMs = 0;
     qint64 m_lastWorldRefreshMs = 0;

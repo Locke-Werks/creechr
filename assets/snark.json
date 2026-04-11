@@ -1,0 +1,841 @@
+{
+    "_comment": "creechr's running commentary on whatever app is in the foreground. keys are lowercase process basenames; values are arrays of one-liners. add your own at will. picked uniformly at random. no entry for an app = creechr uses his generic idle lines. initial seed populated from what was installed on the original dev box, plus common apps creechr recognizes.",
+
+    "_browsers": "================ browsers ================",
+    "msedge.exe": [
+        "edge? really?",
+        "yes microsoft, im sure",
+        "right click + inspect anyway",
+        "this isnt explorer fyi",
+        "the bing button again",
+        "did you mean chrome",
+        "import bookmarks no",
+        "set as default no",
+        "the copilot button, ugh",
+        "sleeping tabs"
+    ],
+    "msedgewebview2.exe": [
+        "another webview",
+        "its chromium inside your app",
+        "check the task manager",
+        "its electron without admitting it"
+    ],
+    "firefox.exe": [
+        "about:config nerd",
+        "containers and you",
+        "the bookmarks toolbar",
+        "ctrl+shift+i",
+        "multi-account containers",
+        "the multi-process era",
+        "theme tinkerer"
+    ],
+    "chrome.exe": [
+        "20 tabs huh",
+        "the ram is going great",
+        "right click + inspect, you nerd",
+        "ctrl+f5 is your friend",
+        "what was that one tab",
+        "ublock please",
+        "close some tabs"
+    ],
+
+    "_editors_ides": "================ code editors + IDEs ================",
+    "code.exe": [
+        "ship it",
+        "git blame yourself",
+        "you missed a semicolon",
+        "tabs vs spaces, again",
+        "the indent is wrong",
+        "rename: rename",
+        "intellisense is wrong",
+        "format on save",
+        "ctrl+p, you weirdo",
+        "the gitignore",
+        "undo undo undo",
+        "another extension",
+        "wsl remote wsl remote"
+    ],
+    "devenv.exe": [
+        "visual studio is loading",
+        "still loading",
+        "actually loading this time",
+        "rebuild solution",
+        "dont press f5",
+        "the find dialog is hidden again",
+        "nuget restore",
+        "clean rebuild it",
+        "the solution explorer is gone",
+        "22 projects in one solution",
+        "maui workload, sure"
+    ],
+    "vsbuildagent.exe": [
+        "another build task",
+        "msbuild is thinking"
+    ],
+    "msbuild.exe": [
+        "msbuild again",
+        "the warning is a lie",
+        "clean rebuild"
+    ],
+    "notepad.exe": [
+        "you're using NOTEPAD",
+        "ctrl+s. now.",
+        "save it somewhere weird",
+        "no syntax highlighting era",
+        "this isnt vim",
+        "notepad++ exists you know",
+        "the tabs? in notepad?",
+        "ai rewrite in notepad? stop"
+    ],
+    "studio64.exe": [
+        "android studio is indexing",
+        "gradle sync, cry",
+        "the emulator is cold",
+        "apply changes and restart"
+    ],
+    "rustup.exe": [
+        "another toolchain install",
+        "stable or nightly",
+        "target add wasm32-unknown-unknown"
+    ],
+    "cargo.exe": [
+        "cargo build, again",
+        "the borrow checker wins",
+        "another 200 crate tree"
+    ],
+    "python.exe": [
+        "venv or conda, pick one",
+        "the pip warning",
+        "its 3.13 now, keep up",
+        "requirements.txt is a lie"
+    ],
+    "pythonw.exe": [
+        "headless python",
+        "tkinter probably"
+    ],
+    "py.exe": [
+        "py launcher strikes again"
+    ],
+    "node.exe": [
+        "node_modules is 400 MB",
+        "the version is wrong",
+        "another ctrl+c",
+        "the event loop is fine"
+    ],
+
+    "_office": "================ microsoft 365 ================",
+    "excel.exe": [
+        "VLOOKUP nightmare",
+        "the merged cells",
+        "save as .csv",
+        "ctrl+shift+enter",
+        "the sheet is named Sheet1",
+        "autofill broke it",
+        "=SUM(A:A)",
+        "#REF!",
+        "pivot table? in THIS economy?"
+    ],
+    "winword.exe": [
+        "the styles are broken",
+        "track changes is on. again.",
+        "stop using comic sans",
+        "ctrl+z does nothing now",
+        "the autocorrect",
+        "section break",
+        "the header is cursed"
+    ],
+    "outlook.exe": [
+        "342 unread",
+        "delete it",
+        "decline this meeting",
+        "out of office: lying",
+        "the mailbox is full",
+        "flag for follow up",
+        "reply all? no.",
+        "teams meeting in 3 minutes"
+    ],
+    "powerpnt.exe": [
+        "the font isnt installed on the projector",
+        "smart art is not smart",
+        "transition: dissolve",
+        "speaker notes lol",
+        "the master slide is unhappy"
+    ],
+    "onenote.exe": [
+        "where did you put that page",
+        "sections in sections in sections",
+        "sync issues"
+    ],
+    "olkbg.exe": [
+        "outlook background task",
+        "still syncing"
+    ],
+
+    "_chat_meetings": "================ chat + meetings ================",
+    "slack.exe": [
+        "two more meetings",
+        "type something",
+        "the unread count haunts me",
+        "huddle no",
+        "react with eyes",
+        "this could have been an email",
+        "set a status",
+        "yikes",
+        "the threads",
+        "close the DMs",
+        "remind me in 2 hours",
+        "post in the wrong channel"
+    ],
+    "discord.exe": [
+        "five servers, zero friends",
+        "they're typing",
+        "react with sob",
+        "dont read the general",
+        "the ping is unread",
+        "voice chat awaits",
+        "nitro?",
+        "stage channel nightmare"
+    ],
+    "teams.exe": [
+        "youre on mute",
+        "no youre still on mute",
+        "leave the call",
+        "you can present now",
+        "your camera is off thank god",
+        "teams is loading",
+        "the file didnt sync"
+    ],
+    "ms-teams.exe": [
+        "youre on mute",
+        "still muted",
+        "the new teams, sure",
+        "leave the call",
+        "notification overload",
+        "the raise hand"
+    ],
+    "zoom.exe": [
+        "youre on mute",
+        "start video",
+        "cant hear you",
+        "send the link",
+        "the waiting room",
+        "leave the meeting",
+        "background blur please"
+    ],
+    "mattermost.exe": [
+        "open source slack",
+        "the unread channels",
+        "huddles in mattermost"
+    ],
+    "signal.exe": [
+        "end to end, baby",
+        "disappearing messages",
+        "sealed sender"
+    ],
+
+    "_terminals": "================ terminals + shells ================",
+    "cmd.exe": [
+        "cmd? in 2026?",
+        "did you mean powershell",
+        "doskey isnt a fix",
+        "alt-enter, you primitive",
+        "dir /s",
+        "where are you"
+    ],
+    "powershell.exe": [
+        "Get-Verb why",
+        "set-executionpolicy bypass",
+        "the verbs are too long",
+        "ctrl+c is also Get-Clipboard",
+        "powershell ise nostalgia",
+        "format-table, always"
+    ],
+    "pwsh.exe": [
+        "powershell 7, fancy",
+        "Get-Verb why",
+        "a profile.ps1, eh",
+        "the new ctrl+c",
+        "oh-my-posh incoming"
+    ],
+    "windowsterminal.exe": [
+        "settings.json again",
+        "another tab? in the terminal?",
+        "powerline too far",
+        "alt+enter please",
+        "the color scheme is wrong",
+        "the default profile changed",
+        "the acrylic is too much"
+    ],
+    "wt.exe": [
+        "settings.json again",
+        "powerline too far",
+        "alt+enter please"
+    ],
+    "openconsole.exe": [
+        "the console host behind the tab",
+        "the settings are in json"
+    ],
+    "conhost.exe": [
+        "the old console",
+        "copy mode with alt",
+        "still here"
+    ],
+    "bash.exe": [
+        "which bash is this",
+        "wsl or git bash, pick",
+        "source ~/.bashrc",
+        "the tab completion"
+    ],
+    "git-bash.exe": [
+        "git status. again.",
+        "git diff yourself",
+        "git stash and pray",
+        "rebase no",
+        "force push? really?",
+        "the reflog will save you"
+    ],
+    "putty.exe": [
+        "putty lives",
+        "the session list",
+        "the monospace font"
+    ],
+    "winscp.exe": [
+        "sftp, like a civilized person",
+        "the sync dialog"
+    ],
+
+    "_dev_tools": "================ dev tools + CLIs ================",
+    "gh.exe": [
+        "gh pr create again",
+        "gh repo clone",
+        "the auth token expired"
+    ],
+    "aws.exe": [
+        "aws configure",
+        "the region is wrong",
+        "credentials expired"
+    ],
+    "azmcp.exe": [
+        "azure cli",
+        "az login",
+        "subscription not set"
+    ],
+    "cmake.exe": [
+        "cmake generator again",
+        "clean build it",
+        "CMakeLists.txt"
+    ],
+    "npcap.exe": [
+        "packet capture time",
+        "wireshark approacheth"
+    ],
+
+    "_files_storage": "================ files + cloud sync ================",
+    "explorer.exe": [
+        "where did you put it",
+        "search wont find it",
+        "ah yes, downloads/temp/temp2/final",
+        "untitled.txt",
+        "the address bar is a path",
+        "desktop is full",
+        "recycle the recycle bin",
+        "sort by date modified, cry",
+        "the tabs actually help"
+    ],
+    "onedrive.exe": [
+        "still syncing",
+        "the cloud icon is red",
+        "files on demand, maybe",
+        "the share link",
+        "version conflict",
+        "the quota"
+    ],
+    "onedrive.sync.service.exe": [
+        "still syncing",
+        "storage almost full",
+        "file in use"
+    ],
+    "icloud.exe": [
+        "the icloud panel",
+        "sync is slow",
+        "sign in again"
+    ],
+    "icloudhome.exe": [
+        "the icloud panel",
+        "sync is slow"
+    ],
+    "icloudphotos.exe": [
+        "still uploading photos",
+        "the library wont load"
+    ],
+    "iclouddrive.exe": [
+        "icloud on windows is brave",
+        "the sync icon"
+    ],
+    "icloudckks.exe": [
+        "cloud kit is thinking",
+        "keychain sync"
+    ],
+    "icloudoutlookconfig64.exe": [
+        "outlook + icloud, god help you"
+    ],
+    "icloudpasswordsextensionhelper.exe": [
+        "the passwords extension",
+        "autofill maybe"
+    ],
+    "applemobiledeviceservice.exe": [
+        "the iphone is plugged in",
+        "itunes era nostalgia"
+    ],
+    "applephotostreams.exe": [
+        "photostream lives"
+    ],
+    "apsdaemon.exe": [
+        "apples push notification thing"
+    ],
+    "qbittorrent.exe": [
+        "the torrent is seeding",
+        "ratio is 0.4",
+        "the tracker is dead",
+        "queue is full"
+    ],
+    "windirstat.exe": [
+        "the treemap rules",
+        "where did that space go",
+        "temp is 40 gb"
+    ],
+    "7zfm.exe": [
+        "7zip file manager",
+        "the ultra compression"
+    ],
+    "7zg.exe": [
+        "extracting something huge"
+    ],
+
+    "_audio_video": "================ audio, video, media ================",
+    "itunes.exe": [
+        "itunes? in 2026?",
+        "the library wont import",
+        "sync error",
+        "authorize this computer"
+    ],
+    "spotify.exe": [
+        "skip",
+        "this song again?",
+        "change the playlist",
+        "shuffle is lying",
+        "private session, eh?",
+        "the wrapped is coming",
+        "the crossfade"
+    ],
+    "vlc.exe": [
+        "traffic cone enthusiast",
+        "subtitles offset by 0.4s",
+        "press . to step frame",
+        "the seek bar wont drag"
+    ],
+    "mpc-hc64.exe": [
+        "media player classic lives",
+        "the aspect ratio override"
+    ],
+    "mpc-hc.exe": [
+        "media player classic lives"
+    ],
+    "ffmpeg.exe": [
+        "ffmpeg is fine, the flags are hard",
+        "another filtergraph",
+        "-vf eq=contrast=1.2"
+    ],
+    "audition.exe": [
+        "adobe audition is loading",
+        "the spectral view",
+        "the multitrack session",
+        "save as session template"
+    ],
+    "adobe audition 2026.exe": [
+        "adobe audition is loading",
+        "the spectral view"
+    ],
+    "ame.exe": [
+        "media encoder is encoding",
+        "still encoding",
+        "the queue is long"
+    ],
+    "resolve.exe": [
+        "davinci resolve is loading",
+        "the fairlight page",
+        "the color page, good luck",
+        "render in place",
+        "the timeline is cursed"
+    ],
+    "davinci resolve.exe": [
+        "davinci resolve is loading",
+        "the fairlight page"
+    ],
+    "shutterencoder.exe": [
+        "shutter encoder encoding",
+        "the preset menu"
+    ],
+    "4kvideodownloaderplus.exe": [
+        "downloading a playlist",
+        "the paste url magic",
+        "the subtitle track too"
+    ],
+    "mp3tag.exe": [
+        "fixing the id3 tags",
+        "album art missing",
+        "the discogs lookup"
+    ],
+
+    "_adobe": "================ adobe creative ================",
+    "photoshop.exe": [
+        "merge the layers",
+        "undo. undo. UNDO.",
+        "the brush is wrong",
+        "save as psd. always.",
+        "the smart object is dumb",
+        "ctrl+alt+shift+e",
+        "content aware fill, sometimes"
+    ],
+    "illustrator.exe": [
+        "the pen tool and you",
+        "outline the strokes",
+        "the artboard is wrong size",
+        "path finder window"
+    ],
+    "indesign.exe": [
+        "the master page",
+        "paragraph styles",
+        "the link is broken again"
+    ],
+    "lightroom.exe": [
+        "the catalog is bigger than the photos",
+        "presets nobody uses"
+    ],
+    "bridge.exe": [
+        "adobe bridge, technically still alive",
+        "the metadata panel"
+    ],
+    "acrord32.exe": [
+        "the pdf is 80 pages",
+        "the form fields are broken",
+        "adobe wants an update"
+    ],
+    "acrobat.exe": [
+        "pdf form fields again",
+        "acrobat is loading",
+        "the signature panel"
+    ],
+    "creative cloud.exe": [
+        "creative cloud is syncing",
+        "another update",
+        "the app is installing"
+    ],
+
+    "_audio_daws": "================ audio DAWs + plugins ================",
+    "nuendo.exe": [
+        "nuendo is loading",
+        "steinberg licensing",
+        "the mix console"
+    ],
+    "nuendo 14.exe": [
+        "nuendo is loading",
+        "the mixconsole",
+        "save the project"
+    ],
+    "cubase.exe": [
+        "cubase is loading",
+        "the project is cursed"
+    ],
+    "spectralayers.exe": [
+        "spectral editing time",
+        "unmix stems, sort of"
+    ],
+    "rx 11 audio editor.exe": [
+        "izotope rx at work",
+        "mouth de-click",
+        "the spectral brush"
+    ],
+    "ozone 12.exe": [
+        "mastering assistant",
+        "another preset"
+    ],
+    "wavescentral.exe": [
+        "waves central updating",
+        "the license cloud"
+    ],
+
+    "_creative_3d": "================ 3d + game engines ================",
+    "unity.exe": [
+        "the console is screaming",
+        "another null reference",
+        "save the scene",
+        "unity hangs on play",
+        "the asset database"
+    ],
+    "unityhub.exe": [
+        "which version of unity",
+        "the license expired",
+        "installing a module"
+    ],
+    "blender.exe": [
+        "ctrl+s ctrl+s ctrl+s",
+        "the donut tutorial again",
+        "number pad shortcuts",
+        "gn, geometry nodes",
+        "the collection hierarchy"
+    ],
+    "ue5editor.exe": [
+        "unreal 5 is loading nanite",
+        "the lumen pass",
+        "shader compile time"
+    ],
+    "unrealeditor.exe": [
+        "unreal is loading shaders",
+        "the blueprint spaghetti",
+        "the content browser"
+    ],
+
+    "_remote_desktop": "================ remote access ================",
+    "anydesk.exe": [
+        "youre remoting in?",
+        "the file transfer",
+        "unattended access, scary",
+        "the session recording"
+    ],
+    "teamviewer.exe": [
+        "teamviewer again",
+        "the license warning",
+        "the partner id"
+    ],
+    "mstsc.exe": [
+        "rdp session inbound",
+        "the clipboard wont share",
+        "fullscreen or not fullscreen"
+    ],
+
+    "_games": "================ games + launchers ================",
+    "steam.exe": [
+        "update available",
+        "the wishlist",
+        "verifying integrity of game files",
+        "big picture no",
+        "the friends list"
+    ],
+    "epicgameslauncher.exe": [
+        "the free weekly game",
+        "still installing",
+        "sign in again",
+        "update the launcher first"
+    ],
+    "battle.net.exe": [
+        "update your launcher first",
+        "scanning files"
+    ],
+    "googleearth.exe": [
+        "loading terrain tiles",
+        "the street view",
+        "fly to zero zero"
+    ],
+
+    "_powertoys": "================ powertoys (bless this app) ================",
+    "powertoys.exe": [
+        "powertoys, the good stuff",
+        "fancy zones, fancy indeed",
+        "text extractor? witchcraft.",
+        "the color picker",
+        "keyboard manager"
+    ],
+    "powertoys.advancedpaste.exe": [
+        "paste as plain text. yes.",
+        "a paste menu for the paste menu"
+    ],
+    "powertoys.alwaysontop.exe": [
+        "pinned on top, yeah",
+        "win+ctrl+t"
+    ],
+    "powertoys.awake.exe": [
+        "awake mode enabled",
+        "the computer will not sleep"
+    ],
+    "powertoys.colorpickerui.exe": [
+        "picking a color, as one does",
+        "hex? rgb? hsl?"
+    ],
+    "powertoys.peek.ui.exe": [
+        "peek at the file",
+        "spacebar preview"
+    ],
+    "powertoys.powerlauncher.exe": [
+        "alt+space, the good one",
+        "search for anything",
+        "its also a calculator"
+    ],
+    "powertoys.quickaccess.exe": [
+        "quick access to files",
+        "pin another folder"
+    ],
+
+    "_ai_local": "================ local AI tools ================",
+    "lm studio.exe": [
+        "loading the model",
+        "context window full",
+        "the gpu is warm",
+        "download another one",
+        "try a smaller quant",
+        "q4_K_M is fine, promise"
+    ],
+    "ollama.exe": [
+        "pulling the model",
+        "ollama run, again",
+        "the modelfile",
+        "another quantization"
+    ],
+    "ollama app.exe": [
+        "ollama is running",
+        "model still loading"
+    ],
+
+    "_utilities": "================ little utilities ================",
+    "eartrumpet.exe": [
+        "eartrumpet, the volume mixer we deserved",
+        "per-app volume, finally",
+        "the system tray icon rules"
+    ],
+    "calculatorapp.exe": [
+        "THE calculator",
+        "programmer mode",
+        "the converter"
+    ],
+    "calc.exe": [
+        "the old calc",
+        "thats not scientific"
+    ],
+    "taskmgr.exe": [
+        "oh, were being administrative",
+        "100% disk again",
+        "kill that one",
+        "why is that using 8gb"
+    ],
+    "hwinfo64.exe": [
+        "temps temps temps",
+        "the sensor page is scary",
+        "log this session",
+        "the vrm is fine"
+    ],
+    "radeonsoftware.exe": [
+        "the amd adrenalin",
+        "another driver update",
+        "the fps overlay"
+    ],
+    "nvidia geforce experience.exe": [
+        "geforce experience lives",
+        "another driver update"
+    ],
+
+    "_streaming": "================ content / streaming ================",
+    "tiktok live studio.exe": [
+        "going live",
+        "the chat is moving fast",
+        "change the overlay"
+    ],
+    "wispr flow.exe": [
+        "voice to text magic",
+        "dictate the email",
+        "the transcript is suspiciously good"
+    ],
+    "topaz gigapixel.exe": [
+        "upscaling, one pixel at a time",
+        "the ai models are thinking"
+    ],
+
+    "_browsers_helpers": "================ browser helpers ================",
+    "searchhost.exe": [
+        "windows search is thinking"
+    ],
+    "startmenuexperiencehost.exe": [
+        "the start menu, as it were"
+    ],
+    "shellexperiencehost.exe": [
+        "another shell experience"
+    ],
+    "applicationframehost.exe": [
+        "uwp in a box"
+    ],
+    "ctfmon.exe": [
+        "text services, ever present"
+    ],
+    "runtimebroker.exe": [
+        "brokering runtime things"
+    ],
+
+    "_misc_apps_creechr_knows": "================ other common apps creechr recognizes ================",
+    "notepad++.exe": [
+        "ah, the npp diehards",
+        "regex find/replace",
+        "save the encoding",
+        "another plugin"
+    ],
+    "sublime_text.exe": [
+        "the unregistered banner",
+        "ctrl+p",
+        "multi cursor go brr"
+    ],
+    "idea64.exe": [
+        "indexing",
+        "still indexing",
+        "the inspections are right",
+        "invalidate caches and restart"
+    ],
+    "pycharm64.exe": [
+        "indexing the venv",
+        "ctrl+alt+l"
+    ],
+    "figma.exe": [
+        "another component variant",
+        "auto-layout is fighting you",
+        "frame this. then frame the frame.",
+        "the constraints are wrong",
+        "export at 2x"
+    ],
+    "obsidian.exe": [
+        "another note",
+        "the graph view scares me",
+        "organizing your notes, not writing",
+        "dataview yourself",
+        "a daily note"
+    ],
+    "notion.exe": [
+        "a database in a database",
+        "its loading",
+        "synced blocks"
+    ],
+    "postman.exe": [
+        "environments tab",
+        "the collection runner",
+        "import the curl"
+    ],
+    "docker desktop.exe": [
+        "docker is starting",
+        "the whale icon",
+        "wsl integration, sigh",
+        "disk pressure"
+    ],
+    "dbeaver.exe": [
+        "the connection timed out",
+        "another query tab"
+    ],
+    "ssms.exe": [
+        "sql server management studio",
+        "dont truncate prod"
+    ],
+    "obs64.exe": [
+        "youre still recording",
+        "scenes and you",
+        "audio levels are red"
+    ],
+    "minecraft.exe": [
+        "build a house",
+        "the creeper is behind you"
+    ]
+}

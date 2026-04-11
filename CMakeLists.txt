@@ -113,6 +113,15 @@ set_target_properties(creechr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+# copy snark.json next to the exe so app_snark.cpp can find it as the
+# shipped default. (it also falls back to assets/snark.json relative
+# to the exe for dev runs where the copy didn't happen.)
+add_custom_command(TARGET creechr POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/snark.json"
+        "$<TARGET_FILE_DIR:creechr>/snark.json"
+)
+
 # === creechr-bridge.exe ===
 # tiny console binary that chrome / edge spawn via native messaging.
 # speaks 4-byte-length-prefix json on stdin/stdout, forwards messages

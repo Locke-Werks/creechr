@@ -11,6 +11,7 @@
 #include "targets/extension_target_provider.h"
 #include "targets/uia_target_provider.h"
 #include "targets/window_target_provider.h"
+#include "util/app_snark.h"
 #include "util/win32_helpers.h"
 #include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
@@ -128,6 +129,7 @@ CreechrApp::~CreechrApp() = default;
 void CreechrApp::start()
 {
     cr::initLogging();
+    cr::initSnarkTable();
     // dev knob: set CREECHR_LOG_LEVEL=debug to get the chatty stuff.
     // valid values: trace debug info warn error. default is info.
     const QByteArray lvl = qgetenv("CREECHR_LOG_LEVEL").toLower();

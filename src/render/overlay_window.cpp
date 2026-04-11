@@ -110,6 +110,15 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
         p.drawPixmap(t.nestPos - widgetOriginEarly, t.pixmap);
     }
 
+    // sinking items: things creechr got bored of and tossed, currently
+    // drifting down toward the bottom edge. drawn under creechr so if
+    // he walks past one in midair, he's in front of it.
+    for (const auto& s : m_creechr->sinkingItems()) {
+        p.drawPixmap(QPoint(static_cast<int>(s.x),
+                            static_cast<int>(s.y)) - widgetOriginEarly,
+                     s.pixmap);
+    }
+
     // creechr's drawRect is in virtual-desktop coords. our widget's
     // top-left maps to the virtual desktop's top-left, but if the
     // virtual desktop has a negative origin (multimon to the left of

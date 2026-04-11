@@ -1527,12 +1527,15 @@ public:
         c.setVelocity({ 0, 0 });
 
         // cursor heist returns the cursor immediately at the stash spot.
-        // it's a 1.2-1.8s gag, not a 30-second one.
+        // it's a 1.2-1.8s gag, not a long wait.
         if (h->target.kind == TargetKind::Cursor) {
             h->returnAtMs = QDateTime::currentMSecsSinceEpoch();
         } else {
+            // boredom timer: creechr guards his stash for 6-16 seconds
+            // of gnawing and gloating before he gets bored and tosses
+            // it. previous 30-90s felt more like abduction than a gag.
             h->returnAtMs = QDateTime::currentMSecsSinceEpoch()
-                + 30000 + QRandomGenerator::global()->bounded(60000);
+                + 6000 + QRandomGenerator::global()->bounded(10000);
         }
 
         // register in hoard so the quit handler can restore us
@@ -1616,7 +1619,8 @@ public:
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
         if (QDateTime::currentMSecsSinceEpoch() >= h->returnAtMs) {
-            return QStringLiteral("heist_return");
+            // bored now — toss it and let it sink into the void
+            return QStringLiteral("heist_toss");
         }
 
         // micro-behavior loop: same shape as IdleState's
@@ -1676,6 +1680,64 @@ private:
     int m_subMs = 0;
     int m_subThreshold = 0;
     bool m_inBehavior = false;
+};
+
+// HeistToss: brief "throwing away" moment. creechr plays the grab
+// animation (arms forward), speaks a bored line, moves the carried
+// pixmap into the sinking-items list with a small upward pop, then
+// clears the heist context so the orchestrator can queue the next
+// one. the actual restore (for window heists) happens LATER, when
+// the sinking item falls past the bottom of the screen.
+class HeistTossState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("heist_toss"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        c.setVelocity({ 0, 0 });
+        c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+        c.speakRandom({
+            QStringLiteral("bored"),
+            QStringLiteral("eh"),
+            QStringLiteral("nah"),
+            QStringLiteral("im done with this"),
+            QStringLiteral("meh"),
+            QStringLiteral("toss"),
+            QStringLiteral("whatever"),
+            QStringLiteral("not mine anymore"),
+            QStringLiteral("bye"),
+        }, 1600);
+
+        HeistContext* h = c.heist();
+        if (!h) return;
+        if (h->carriedPixmap.isNull()) return;
+
+        // drop it from wherever it's currently sitting. the stash
+        // position is where HeistCarry dropped it. small random
+        // horizontal velocity for flavor, small upward pop so it
+        // pauses before falling.
+        auto* rng = QRandomGenerator::global();
+        const double vx = (rng->bounded(40) - 20); // -20..20 px/sec
+        const double vy = -30.0;                    // small upward pop
+        c.addSinkingItem(h->carriedPixmap, h->stashedAt,
+                         QPointF(vx, vy), h->hoardId);
+        LOG_INFO(QStringLiteral("heist: tossed %1 (will sink + restore %2)")
+            .arg(h->target.label)
+            .arg(h->hoardId.isEmpty() ? QStringLiteral("no-op") : h->hoardId));
+    }
+
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext&) override
+    {
+        // hold the toss pose until the grab anim finishes, then clear
+        // the heist context and return to idle. the sinking item is
+        // already in creechr's m_sinking list from enter().
+        if (c.animator().finished()) {
+            c.clearHeist();
+            return QStringLiteral("idle");
+        }
+        return {};
+    }
 };
 
 class HeistReturnState : public State
@@ -1814,6 +1876,7 @@ Creechr::Creechr(const SpriteAtlas& atlas)
     m_states.registerState(std::make_unique<HeistCarryState>());
     m_states.registerState(std::make_unique<HeistStashState>());
     m_states.registerState(std::make_unique<HeistWaitState>());
+    m_states.registerState(std::make_unique<HeistTossState>());
     m_states.registerState(std::make_unique<HeistReturnState>());
 }
 
@@ -1845,6 +1908,10 @@ void Creechr::tickLogic(int deltaMs, const WorldContext& world)
         return; // freeze during fullscreen apps. spec §4.6
     }
     m_states.tick(deltaMs, *this, world);
+    // sinking items update at logic rate so their restores fire in
+    // sync with the rest of the world. purely visual until the moment
+    // they pass the bottom edge and hoard->restoreById lands.
+    tickSinkingItems(deltaMs, world.virtualDesktop);
 }
 
 void Creechr::tickRender(int deltaMs)
@@ -1902,6 +1969,41 @@ void Creechr::spawnPuff(QPointF where, int count, QColor color, int lifetimeMs)
         if (m_particles.size() > 256) {
             // hard cap so a runaway state doesnt accumulate forever
             m_particles.removeFirst();
+        }
+    }
+}
+
+void Creechr::addSinkingItem(const QPixmap& pm, QPoint startPos,
+                              QPointF initialVel, const QString& hoardId)
+{
+    if (pm.isNull()) return;
+    SinkingItem s;
+    s.pixmap = pm;
+    s.x = startPos.x();
+    s.y = startPos.y();
+    s.vx = initialVel.x();
+    s.vy = initialVel.y();
+    s.hoardId = hoardId;
+    m_sinking.push_back(s);
+}
+
+void Creechr::tickSinkingItems(int deltaMs, const QRect& virtualDesktop)
+{
+    constexpr double kSinkGravity = 85.0;  // slow enough to read as "sinking"
+    const double dt = deltaMs / 1000.0;
+    const int bottomLimit = virtualDesktop.bottom() + 4;
+    for (int i = m_sinking.size() - 1; i >= 0; --i) {
+        SinkingItem& s = m_sinking[i];
+        s.vy += kSinkGravity * dt;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        // fully past the bottom edge?
+        if (static_cast<int>(s.y) > bottomLimit) {
+            if (m_hoard && !s.hoardId.isEmpty()) {
+                LOG_INFO(QStringLiteral("sinking item %1 sank, restoring").arg(s.hoardId));
+                m_hoard->restoreById(s.hoardId);
+            }
+            m_sinking.removeAt(i);
         }
     }
 }

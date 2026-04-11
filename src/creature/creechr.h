@@ -33,6 +33,22 @@ struct Trophy {
     QPoint  nestPos;  // top-left in screen coords
 };
 
+// a SinkingItem is a stolen thing creechr got bored of and tossed. it
+// drifts downward under slow gravity until it passes the bottom of
+// the virtual desktop. at that moment, if hoardId is non-empty, the
+// corresponding hoard entry's restore callback fires — for window
+// heists that means the original window reappears. for uia / cursor
+// heists it's a no-op restore. for dom heists it sends the restore
+// message to the browser extension.
+struct SinkingItem {
+    QPixmap pixmap;
+    double x = 0.0;
+    double y = 0.0;
+    double vx = 0.0;
+    double vy = 0.0;
+    QString hoardId;   // empty if no restore needed
+};
+
 // tiny visual particle. lives a few hundred ms, fades by alpha based
 // on age/lifetime, gets drawn by OverlayWindow as a small filled rect.
 // no collision, no gravity (for now), pure visual flair.
@@ -146,6 +162,16 @@ public:
     void addTrophy(const QPixmap& pm, const QRect& virtualDesktop);
     const QVector<Trophy>& trophies() const { return m_trophies; }
 
+    // sinking items — stolen things creechr got bored of and tossed,
+    // now drifting downward toward the bottom edge of the screen.
+    // spawn one via addSinkingItem(). tickSinkingItems() advances the
+    // physics and removes items that sank past the bottom; if they
+    // had a hoardId, the hoard restore fires at that moment.
+    void addSinkingItem(const QPixmap& pm, QPoint startPos,
+                        QPointF initialVel, const QString& hoardId);
+    void tickSinkingItems(int deltaMs, const QRect& virtualDesktop);
+    const QVector<SinkingItem>& sinkingItems() const { return m_sinking; }
+
     // first-time setup — must be called once after construction so the
     // initial state can fire its enter() callback against a real world.
     void initialize(const WorldContext& world);
@@ -189,8 +215,9 @@ private:
     int m_rappelAnchorY = -1;
     QString m_speechText;
     qint64 m_speechExpiryMs = 0;
-    QVector<Particle> m_particles;
-    QVector<Trophy>   m_trophies;
+    QVector<Particle>     m_particles;
+    QVector<Trophy>       m_trophies;
+    QVector<SinkingItem>  m_sinking;
 
     Hoard* m_hoard = nullptr;
     ExtensionTargetProvider* m_ext = nullptr;

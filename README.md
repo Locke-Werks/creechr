@@ -142,7 +142,7 @@ yet but are planned.)
   way safer (zero risk of orphaning an occluder window over a user app).
   add the occluder back in v0.4 once the rest of the rough edges are sanded.
 
-### v0.4 — he becomes a real animal ← you are here
+### v0.4 — he becomes a real animal
 
 everything between v0.3 and v1.0 thats not browser-related. this is
 the version where creechr stops being a sprite-on-rails and starts
@@ -218,13 +218,166 @@ being something with body language.
   across the screen with an entire 800px window held aloft. on purpose
   this time. the user laughed at it and said keep it.
 
-### v1.0 — he steals stuff out of webpages (with the extension)
+### v1.0 — he's a whole animal now ← you are here
 
-still **not tagged** because i havent verified the full pipeline against
-a real chrome instance and i dont tag things i havent watched work. but
-the plumbing is wired end-to-end now and structurally complete.
+everything that makes creechr feel like a creature with weight and
+opinions instead of a sprite that slides on rails. v0.4 gave him a
+body and physics. v1.0 makes him use them.
 
-#### the pipeline
+#### proper pendulum rappel
+- rappel DOWN now anchors at the window corner he jumped off, does a
+  brief free-fall, then swings on a real nonlinear pendulum with
+  damping + wall bouncing. two-phase state machine inside the state.
+- rappel UP picks a random CORNER of the target window (left or right)
+  instead of always the top dead center, so the rope starts diagonal
+  and he visibly swings while pulling himself up.
+- rappel up PASSES THROUGH window edges during the climb (user ask —
+  the old wall-bounce flip-flop looked like the rope was a fuse).
+  lands INSIDE the target window instead of straddling the corner,
+  so hasPlatformUnder accepts the landing and he doesnt immediately
+  fall off.
+- visible rope has a white halo pass under the dark rope so it shows
+  up on dark-mode wallpapers.
+
+#### gnaw + attach + shake off
+- walks up to a window edge, latches on, chews on it for a few
+  seconds. while latched hes literally tracking that hwnd's DWM
+  frame every tick — drag the window around the desktop, he moves
+  with it. see it catch on a snap-edge, see him slide sideways with
+  it.
+- shake detection: 4+ x-velocity sign reversals in an 800ms sliding
+  window with nontrivial magnitude = SHAKEN OFF. computes a fling
+  velocity from the shake direction and intensity, transitions to
+  flung, he says one of "OW", "DICK", "fuck", "HEY", "rude" on the
+  way out.
+
+#### personality + speech
+- IdleState fires a micro-behavior every 1.5-3.5s: blink, yawn,
+  scratch, or a 10% chance to skip the animation and just speak an
+  app-specific snark line about whatever's in the foreground.
+- speech bubbles at every state transition worth narrating:
+  - heist approach: "ooh" / "i want that one" / "sneaky time"
+  - heist grab: "yoink" / "MINE" / "gotcha"
+  - gnaw start: "om nom" / "delicious" / "this is mine now"
+  - flung (shake-off): "OW" / "DICK" / "rude"
+  - rappel shoot: "grapple out" / "hook ho" / "INCOMING"
+  - cursor swing kick: "more!" / "harder" / "weeeee" / "yes"
+  - heist toss: "bored" / "nah" / "bye"
+  - mouse-hover notice: "hi" / "back off" / "personal space"
+  - window drag notice: "HEY" / "oh no you dont" / "WHERE"
+  - scary admin: "NO" / "EVIL" / "not the registry"
+- pounces at the cursor like a cat. 1-in-20 chance during idle micro-
+  behaviors — computes a direction from creechr to the cursor, lobs
+  himself in that direction with an upward arc, lands in flung. "RAH"
+
+#### cursor swing on idle (replaces nap)
+- when msSinceLastInput > 30000, creechr finishes whatever he's
+  currently doing first (walk completes, current scratch finishes),
+  THEN shoots his grapple at the mouse cursor and rappels UP to swing
+  height at the target rope length. proper approach animation with
+  the grab pose, then climb pose, then hang pose at the top. not a
+  teleport.
+- at swing height he kicks himself going with a speech bubble. real
+  low-damping pendulum physics so the swing persists. every ~2
+  seconds when the amplitude decays, he auto-kicks with another
+  speech bubble — "more!", "again!", "push!", "kick", "yes".
+- the moment you touch the mouse or the cursor drifts more than 8 px,
+  he RELEASES with his current tangential velocity (so the release
+  feels continuous) and transitions to flung.
+
+#### toss + sink
+- heist wait timer shortened to 6-16s (was 30-90s — felt like
+  abduction). when the boredom timer fires, creechr does a brief toss
+  animation, speaks "bored" / "nah" / "meh" / "bye", and the carried
+  pixmap becomes a sinking item that drifts downward under slow
+  gravity (85 px/s^2) until it crosses the screen bottom.
+- when the sinking item crosses the bottom edge, if it was a WINDOW
+  heist, the hoard restore callback fires and the original window
+  reappears at its original location. for UIA/DOM/cursor the source
+  was never modified so the restore is a no-op or just clears the
+  hoard entry.
+- creechr clears his heist context the moment he tosses, so the
+  orchestrator can queue the next heist immediately. the sinking
+  item keeps going independently.
+- trophy nest: successful heist returns ALSO add a small trophy
+  pixmap to a pile in the bottom-right corner for the rest of the
+  session. capped at 8, oldest dropped.
+
+#### occlusion filter
+- creechr only sees and interacts with windows the user can actually
+  see. post-processing pass over EnumWindows results (topmost first)
+  tests 3 probe points along each window's top edge against all
+  higher-z windows. if all 3 are covered, the window is filtered out
+  of the snapshot. no more rappelling to a terminal that's behind
+  your browser.
+
+#### reactions
+- window drag noticing: if any visible window moves fast (|Δ| >= 35
+  px between 10Hz world refreshes) and is within 600 px of creechr
+  while he's idling or walking, he turns to face it and yells "HEY"
+  / "wait" / "come back" / "rude". 4s cooldown.
+- scary admin flee: taskmgr, regedit, mmc, msconfig, services,
+  certmgr, perfmon, eventvwr, compmgmt, consent, logonui, winlogon,
+  windows whose title starts with "Administrator:", and the
+  credential dialog xaml host class — if one of those is within 350
+  px, creechr panics ("NO" / "EVIL" / "RUN" / "ABORT" / "DANGER" /
+  "not the registry"), gets flee velocity in the opposite direction,
+  and transitions to flung. 6s cooldown. NOTE: the actual UAC
+  consent.exe runs on the secure desktop and can't be seen from our
+  process — creechr reacts to what typically precedes UAC rather
+  than UAC itself.
+- cursor hover noticing: cursor within 100 px of creechr's sprite
+  center while he's idling or walking → he turns to face it and says
+  "hi" / "back off" / "personal space" / "rude". 5s cooldown.
+
+#### app-specific snark from JSON
+- all snark lines live in `assets/snark.json`, a flat object mapping
+  lowercase process basenames to arrays of one-liners. on first run,
+  creechr copies this file to `%LOCALAPPDATA%\creechr\creechr\snark.json`
+  and loads from there on every subsequent launch. edit it freely —
+  no rebuild needed.
+- initial seed covers 143 apps with ~750 lines of snark calibrated
+  to be funny to ACTUAL USERS of each app — "VLOOKUP nightmare" for
+  excel, "git blame yourself" for vs code, "youre on mute" for
+  teams, "still compiling shaders" for unreal, "q4_K_M is fine
+  promise" for lm studio.
+- lookup order: `$CREECHR_SNARK_FILE` env var → user-local copy →
+  shipped default next to the exe.
+
+#### dark mode visibility
+- arms, legs, and the grapple rope all get a 4 px white halo pass
+  under the 2 px dark ink pass. shows up on light and dark
+  wallpapers equally. same trick comic book artists use.
+
+#### misc polish
+- walk speed variety: 60% normal stroll (60 px/sec), 25% slow amble
+  (38), 15% hurried scurry (105). picked per-session, breaks the
+  metronomic back-and-forth.
+- shadow ellipse under his feet so he doesnt look like he's
+  hovering an inch above the surface. suppressed during flung /
+  rappel_climb / rappel_descend.
+- particle effects: dust puffs on hard landings, body-color splash
+  on heist bite, dark puff at the grapple hook point when it bites
+  in, small kchink at the rappel anchor.
+- cursor drag was leaving the cursor behind on high-DPI displays
+  because SetCursorPos takes physical pixels while creechr's
+  position is in logical pixels. fixed via primaryScreen dpr
+  multiplication.
+- tray menu now has: pause/resume, fire a heist now, release
+  everything he's stolen, open log folder, quit.
+- CREECHR_COLOR env var picks body color: pink / teal / lime /
+  orange / sky / violet / blood / moss or a `#rrggbb` hex.
+- CREECHR_SPRITE=path/to/atlas.png overrides the procedural sprite.
+  expected layout: 8 cols × 15 rows of 48px cells (384×720 total).
+
+#### browser theft (structurally complete, chrome verification punted to v1.1)
+
+the full pipe → bridge → ExtensionTargetProvider → DOM heist path is
+wired end-to-end and compiles clean. i have NOT verified it against
+a real chrome instance because i didnt have chrome on the build box
+at tag time. if you want DOM heists to fire you can do the install
+dance below; if it works, great; if it doesnt, file it against v1.1
+and i'll fix it.
 
 ```
 [chrome extension] ←native messaging→ [creechr-bridge.exe] ←named pipe→ [creechr.exe]
@@ -232,111 +385,73 @@ the plumbing is wired end-to-end now and structurally complete.
        background.js           on stdin/stdout      newline-delim json
 ```
 
-- **chrome extension** in `extension/`. manifest v3, vanilla js, no
-  build step. service worker connects to the native messaging host
-  named `com.creechr.bridge` on demand. content script walks the dom
-  for `<img>`, `<a href>`, `<button>`, `<li>`, gives each one a stable
-  `data-creechr-id`, returns rect + label. on `steal` it removes the
-  element and stashes parent + sibling on `window.__creechrStash`. on
-  `restore` it puts it back exactly. opt-in per tab via popup.
-- **creechr-bridge.exe** is a small pure-stdlib console binary that
-  chrome spawns when the extension calls `connectNative()`. it reads
-  the length-prefix native messaging frames from stdin and forwards
-  them to creechr's named pipe. a worker thread reads the pipe and
-  writes length-prefix frames back to chrome's stdout. _binary mode_
-  on stdio is required — text mode would mangle the length prefix.
-- **creechr.exe** runs an `ExtensionPipeServer` (QLocalServer wrapping
-  a windows named pipe at `\\.\pipe\creechr-extension`, current-user
-  only). last bridge connection wins. on top of that lives an
-  `ExtensionTargetProvider` that auto-scans every 3 seconds while a
-  bridge is connected and caches DOM target snapshots.
-- **heist flow** for `TargetKind::DomElement`: BitBlt the rect for the
-  carried pixmap, send `requestSteal(opaqueId)`, wait for `steal_ack`
-  (with a 4-second hard timeout), then proceed through the same
-  approach → grab → bite → carry → stash → wait → return state machine
-  as window/uia heists. on return: `requestRestore(opaqueId)` from a
-  hoard restore lambda, which the extension routes to the content
-  script's `contentRestore()`.
+install:
+1. `cmake --build build` (gets you both binaries)
+2. `.\install_extension_host.ps1` (writes the HKCU native host keys)
+3. load `extension/` unpacked in chrome: `chrome://extensions` →
+   developer mode → load unpacked
+4. **copy the extension id** chrome assigns it
+5. edit `creechr-bridge-host.json` and replace
+   `__YOUR_EXTENSION_ID_HERE__` with `chrome-extension://<that id>/`
+6. reload the extension
+7. run creechr, open a tab, click the popup, click "let him in"
+8. watch for `ExtensionPipeServer: bridge connected` in creechr.log
 
-#### installing it
+known gaps: single-tab (last-opted-in wins), DOM rect math still
+uses primary-screen DPR (approximate on mixed-dpi multimon), the
+extension id editing dance is unavoidable for unpacked dev
+extensions (chromes fault).
 
-once, after a clean build of both binaries:
+## dev environment variables
 
-```
-cmake --build build
-.\install_extension_host.ps1
-```
+knobs you can set in the environment to change creechr's behavior
+without rebuilding. most are development aids.
 
-then load the unpacked extension in chrome (`chrome://extensions` →
-developer mode → load unpacked → pick the `extension/` directory).
-chrome will assign the extension a long random id like
-`pgkfajdljekloeoknobcdpfbgmldlbjk`. **copy that id**, then open
-`creechr-bridge-host.json` (the install script wrote it next to the
-ps1) and replace `__YOUR_EXTENSION_ID_HERE__` with `chrome-extension://<that id>/`.
-
-yes this dance is annoying. yes its mv3s fault. there is no way to
-register a native host that accepts an extension whose id you dont
-know yet. production extensions ship a public key in the manifest so
-the id is deterministic — i havent done that for the dev build because
-it would mean either committing a private key or running through a
-key generation step every install. neither is great.
-
-after editing the host json, reload the extension once. then run
-creechr.exe, open a tab, click the creechr popup, click "let him in".
-you should see in `creechr.log`:
-
-```
-ExtensionPipeServer: bridge connected
-ext provider: bridge connected, starting scans
-ext provider: scan_result, N items cached
-```
-
-at which point the orchestrator can roll a dom heist (20% chance per
-attempt) and creechr will pick a random `<img>` or `<a>` from the
-opted-in tab and try to eat it.
-
-#### remaining rough edges
-- the chrome extension id editing dance (above)
-- the content scripts rect math uses `screenX/Y` plus the page's
-  `devicePixelRatio` divided by the OS dpr — right on single-monitor
-  100%-scale boxes, approximate everywhere else
-- if the page reflows between scan and steal, the captured pixmap is
-  what was at that screen position at scan time, which may not be
-  what's there at steal time (creechr will visually carry off whatever
-  was at those coords)
-- only one tab at a time. last opted-in wins.
-- multi-tab tracking would mean the bridge needs to remember which tab
-  context each native-port message came from, which it doesnt
-- closing a tab mid-heist orphans the dom restore. the hoard entry
-  still calls requestRestore on quit but the content script wont be
-  there anymore — the element is just gone. nothing else breaks.
+| var | effect |
+|-----|--------|
+| `CREECHR_LOG_LEVEL` | `trace` / `debug` / `info` / `warn` / `error`. default `info`. |
+| `CREECHR_TEST_EXIT_MS` | auto-quit after N ms. for scripted test runs. |
+| `CREECHR_HEIST_NOW=1` | fire a heist every ~2s, ignore the random gate and input-idle gate |
+| `CREECHR_GNAW_NOW=1` | every climb decision becomes a gnaw attempt |
+| `CREECHR_RAPPEL_NOW=1` | every climb decision becomes a rappel attempt |
+| `CREECHR_CHAOS=1` | ~30% of window heists skip the carry-pixmap shrink, restoring the legendary bug where creechr carries an entire 800px window across the desktop |
+| `CREECHR_COLOR=name` | body color: `pink` / `teal` / `lime` / `orange` / `sky` / `violet` / `blood` / `moss`, or a `#rrggbb` hex |
+| `CREECHR_SPRITE=path.png` | override the procedural atlas. must be 384×720 (8 cols × 15 rows × 48 px). |
+| `CREECHR_SNARK_FILE=path.json` | override the app-snark table path. |
 
 ## known issues
 
-- the placeholder sprite is procedurally drawn pink + black with white
-  eyes. real art exists in my head. don't @ me.
-- when creechr climbs onto a maximized window (top y = 0), his sprite
-  ends up at y = -48 (above the screen) and qt clips him. you'll see
-  his head pop above the top of the desktop. fix is to clamp climb
-  destinations to y >= 0 but i havent.
-- shake-off physics tuning is approximate. the velocity numbers in
-  GnawState's shake-detect path were chosen by gut feel and may need
-  adjusting once enough people actually shake windows around with him
-  attached.
-- if a stolen window's process exits while creechr is carrying its
-  bitmap to the corner, the restore callback no-ops on a dead hwnd
-  and we just drop the entry. visually he'll still walk it to the
-  corner and "drop" it, then walk back to nothing. nbd, just looks
-  silly.
-- the dom heist coordinate math (extension content script) still uses
-  the page's devicePixelRatio divided by the primary screen dpr. fine
-  on single-monitor 100% boxes, approximate everywhere else. native
-  win32 sources got the per-monitor fix in v0.4 but the extension
-  side still needs the same treatment.
-- right click menus from other apps sometimes draw on top of him. fine.
-- heist orchestrator picks targets at random, no preference for things
+- **the placeholder sprite is procedurally drawn** pink (or whatever
+  CREECHR_COLOR you picked) with white halos on the arm/leg/rope
+  outlines for dark-mode visibility. no real art exists. if you can
+  draw, drop a 384x720 PNG somewhere and set `CREECHR_SPRITE=path` —
+  the 8×15 grid layout is documented above.
+- **shake-off physics** velocity numbers were picked by gut feel.
+  user testing suggests they're "fine" but they havent been properly
+  tuned. constants are in `rappel::` at the top of creechr.cpp.
+- **if a stolen window's process exits** while creechr is carrying
+  its pixmap, the restore callback no-ops on the dead hwnd. visually
+  he still walks the pixmap to a corner, sinks it, and walks away.
+  the window just doesnt come back. nothing crashes.
+- **DOM heist coordinate math** (extension content script) still
+  uses the page's devicePixelRatio divided by the primary screen
+  dpr. fine on single-monitor 100% boxes, approximate everywhere
+  else. native win32 sources got the per-monitor fix earlier but
+  the extension side still needs the same treatment. v1.1.
+- **right click menus from other apps** sometimes draw on top of
+  him. nothing we can do about that without raising our z-order
+  above normal top-level windows, which would make creechr steal
+  focus from popups.
+- **heist orchestrator picks at random**. no preference for things
   that look fun. you might watch him steal the same notepad window
-  three times in a row. that's the rng working as designed, sorry.
+  three times in a row. the rng is working as designed.
+- **mixed-dpi multi-monitor is not fully tested.** the per-monitor
+  dpi fix covers the native side; multi-monitor with different
+  scales has not been properly verified. single-monitor users at
+  any scale should be fine.
+- **chrome extension verification is punted to v1.1.** see the v1.0
+  section for the install dance and known gaps. structurally
+  complete, not e2e verified by the author.
 
 ## license
 

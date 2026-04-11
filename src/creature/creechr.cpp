@@ -96,13 +96,15 @@ public:
         }
 
         // pending heist takes priority over EVERYTHING else, including
-        // sleep. otherwise the orchestrator can queue a heist and
-        // creechr will just nap on top of it.
+        // the idle-timeout swing. otherwise the orchestrator can queue
+        // a heist and creechr will just start swinging on top of it.
         if (c.heist() && !c.heist()->grabbed) {
             return QStringLiteral("heist_approach");
         }
         if (world.msSinceLastInput > 30000) {
-            return QStringLiteral("sleep");
+            // user has stepped away — grapple the cursor and swing
+            // from it. replaces the old sleep-on-idle behavior.
+            return QStringLiteral("cursor_swing");
         }
 
         // personality micro-behaviors. if we're playing a one-shot anim,
@@ -275,7 +277,7 @@ public:
         }
 
         if (world.msSinceLastInput > 30000) {
-            return QStringLiteral("sleep");
+            return QStringLiteral("cursor_swing");
         }
         const double dt = deltaMs / 1000.0;
         QPointF pos = c.position() + c.velocity() * dt;
@@ -1492,13 +1494,23 @@ public:
                 return QStringLiteral("heist_return");
             }
 #ifdef _WIN32
+            // SetCursorPos takes PHYSICAL pixels when the process is
+            // dpi aware (we are, per-monitor v2). creechr's position
+            // is in LOGICAL pixels. if you just pass logical coords
+            // the cursor ends up scaled DOWN by the dpr — on a 150%
+            // display the cursor lags behind creechr because it only
+            // moves 2/3 as far. multiply by the primary screen dpr to
+            // convert back to physical before the call.
             int cx = qBound(world.virtualDesktop.left()  + 4,
                             static_cast<int>(pos.x()) + 16,
                             world.virtualDesktop.right() - 4);
             int cy = qBound(world.virtualDesktop.top()   + 4,
                             static_cast<int>(pos.y()) + 16,
                             world.virtualDesktop.bottom() - 4);
-            SetCursorPos(cx, cy);
+            QScreen* primary = QGuiApplication::primaryScreen();
+            const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+            SetCursorPos(static_cast<int>(cx * dpr),
+                         static_cast<int>(cy * dpr));
 #endif
         }
 
@@ -1774,8 +1786,12 @@ public:
             c.addTrophy(h->carriedPixmap, world.virtualDesktop);
 #ifdef _WIN32
             if (h->target.kind == TargetKind::Cursor) {
-                SetCursorPos(h->originalFrame.center().x(),
-                             h->originalFrame.center().y());
+                // same logical->physical conversion as HeistCarry
+                const QPoint center = h->originalFrame.center();
+                QScreen* primary = QGuiApplication::primaryScreen();
+                const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+                SetCursorPos(static_cast<int>(center.x() * dpr),
+                             static_cast<int>(center.y() * dpr));
             }
 #endif
             c.clearHeist();
@@ -1783,6 +1799,118 @@ public:
         }
         return {};
     }
+};
+
+// CursorSwing: when the system has been idle long enough that creechr
+// would normally sleep, he instead fires his grapple at the mouse
+// cursor and swings from it like a pendulum. as long as the cursor
+// sits still, he keeps swinging with very low damping (tiny kicks
+// whenever the swing starts to die out). the moment the user moves
+// the mouse or clicks, he releases and drops into flung.
+//
+// reuses the rappel anchor + the overlay's rope drawing. the anchor
+// is set to QCursor::pos() (logical qt coords, same space creechr
+// lives in). rope length is short so the arc fits on screen.
+class CursorSwingState : public State
+{
+public:
+    QString name() const override { return QStringLiteral("cursor_swing"); }
+
+    void enter(Creechr& c, const WorldContext&) override
+    {
+        const QPoint cursor = QCursor::pos();
+        c.setRappelAnchor(cursor.x(), cursor.y());
+        c.animator().setAnimation(QStringLiteral("hang"));
+        c.speakRandom({
+            QStringLiteral("wheeee"),
+            QStringLiteral("look at this"),
+            QStringLiteral("swinging"),
+            QStringLiteral("from your cursor"),
+            QStringLiteral("WHEEE"),
+            QStringLiteral("physics"),
+            QStringLiteral("hi cursor"),
+        }, 1800);
+
+        m_L = 120.0;
+        // start him HANGING straight down from the cursor with a
+        // small lateral kick to begin the swing
+        m_theta = 0.0;
+        m_thetaVel = 1.6; // rad/sec — ~half a radian first tick
+
+        // snap position onto the rope's bottom
+        rappel::positionFromTheta(c, m_L, m_theta);
+
+        // record the cursor position so we can detect movement relative
+        // to the anchor (msSinceLastInput doesnt cover silent cursor
+        // shifts by other processes)
+        m_anchorStart = cursor;
+        m_kickCooldown = 0;
+    }
+
+    void exit(Creechr& c, const WorldContext&) override
+    {
+        c.clearRappelAnchor();
+    }
+
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
+    {
+        // exit if the user came back
+        if (world.msSinceLastInput < 600) {
+            // rope releases — gravity takes over via flung
+            // use his current tangential velocity so the release
+            // feels continuous instead of a dead drop
+            const double tangSpeed = m_thetaVel * m_L;
+            const double vx = tangSpeed *  std::cos(m_theta);
+            const double vy = tangSpeed * -std::sin(m_theta);
+            c.setVelocity({ vx, vy });
+            return QStringLiteral("flung");
+        }
+        // or if the cursor drifted more than a little
+        const QPoint cursor = QCursor::pos();
+        const int dxCursor = cursor.x() - m_anchorStart.x();
+        const int dyCursor = cursor.y() - m_anchorStart.y();
+        if (dxCursor * dxCursor + dyCursor * dyCursor > 8 * 8) {
+            const double tangSpeed = m_thetaVel * m_L;
+            const double vx = tangSpeed *  std::cos(m_theta);
+            const double vy = tangSpeed * -std::sin(m_theta);
+            c.setVelocity({ vx, vy });
+            return QStringLiteral("flung");
+        }
+
+        const double dt = deltaMs / 1000.0;
+
+        // pendulum integration. VERY low damping so the swing doesnt
+        // die out on its own within a few seconds — the whole point
+        // is he keeps going until interrupted.
+        constexpr double kG = 1500.0;
+        constexpr double kDamp = 0.12;
+        const double aTheta = -(kG / m_L) * std::sin(m_theta) - kDamp * m_thetaVel;
+        m_thetaVel += aTheta * dt;
+        m_theta    += m_thetaVel * dt;
+        // clamp for numerical safety
+        if (m_thetaVel > 8.0)  m_thetaVel = 8.0;
+        if (m_thetaVel < -8.0) m_thetaVel = -8.0;
+
+        // if the swing is about to die out, give him a tiny push. this
+        // way he keeps going indefinitely while the user is away.
+        m_kickCooldown -= deltaMs;
+        if (m_kickCooldown <= 0
+            && std::abs(m_thetaVel) < 0.35
+            && std::abs(m_theta) < 0.20) {
+            m_thetaVel = (QRandomGenerator::global()->bounded(2) == 0) ? 1.8 : -1.8;
+            m_kickCooldown = 2000;
+        }
+
+        rappel::positionFromTheta(c, m_L, m_theta);
+        return {};
+    }
+
+private:
+    double m_L = 120.0;
+    double m_theta = 0.0;
+    double m_thetaVel = 0.0;
+    QPoint m_anchorStart;
+    int m_kickCooldown = 0;
 };
 
 // nap. just sit there with eyes closed. periodically emits a small
@@ -1871,6 +1999,7 @@ Creechr::Creechr(const SpriteAtlas& atlas)
     m_states.registerState(std::make_unique<RappelDescendState>());
     m_states.registerState(std::make_unique<SleepState>());
     m_states.registerState(std::make_unique<WakeState>());
+    m_states.registerState(std::make_unique<CursorSwingState>());
     m_states.registerState(std::make_unique<HeistApproachState>());
     m_states.registerState(std::make_unique<HeistGrabState>());
     m_states.registerState(std::make_unique<HeistCarryState>());

@@ -101,9 +101,12 @@ public:
         if (c.heist() && !c.heist()->grabbed) {
             return QStringLiteral("heist_approach");
         }
-        if (world.msSinceLastInput > 30000) {
-            // user has stepped away — grapple the cursor and swing
-            // from it. replaces the old sleep-on-idle behavior.
+        // idle-timeout swing: user has stepped away. only trigger when
+        // we're NOT in the middle of a micro-behavior anim, so the
+        // current scratch/yawn/blink finishes first. state machine
+        // already ensures we got here by walk finishing naturally, so
+        // this is the correct "finish what youre doing" gate.
+        if (world.msSinceLastInput > 30000 && !m_inBehavior) {
             return QStringLiteral("cursor_swing");
         }
 
@@ -276,9 +279,12 @@ public:
             c.setPosition(p);
         }
 
-        if (world.msSinceLastInput > 30000) {
-            return QStringLiteral("cursor_swing");
-        }
+        // NOTE: walk does NOT check for idle-swing here anymore. user
+        // wants creechr to finish whatever hes doing before shooting
+        // his grapple at the cursor. the check only lives in IdleState
+        // now, which is the natural rest point after walk/climb/etc
+        // complete. worst case delay is one walk cycle (up to ~14s)
+        // but the user isnt looking anyway during idle.
         const double dt = deltaMs / 1000.0;
         QPointF pos = c.position() + c.velocity() * dt;
 
@@ -1803,14 +1809,19 @@ public:
 
 // CursorSwing: when the system has been idle long enough that creechr
 // would normally sleep, he instead fires his grapple at the mouse
-// cursor and swings from it like a pendulum. as long as the cursor
-// sits still, he keeps swinging with very low damping (tiny kicks
-// whenever the swing starts to die out). the moment the user moves
-// the mouse or clicks, he releases and drops into flung.
+// cursor and swings from it like a pendulum.
 //
-// reuses the rappel anchor + the overlay's rope drawing. the anchor
-// is set to QCursor::pos() (logical qt coords, same space creechr
-// lives in). rope length is short so the arc fits on screen.
+// two phases:
+//   Approach: plays "grab" animation (hook toss), then "climb_up"
+//     while the rope shrinks from the initial creechr-to-cursor
+//     distance down to the target swing length (120 px). pendulum
+//     physics are active during approach so he swings slightly as
+//     he pulls himself up.
+//   Swing: L fixed at 120, pendulum with very low damping. self-
+//     kicks every 2 seconds when the swing amplitude decays, and
+//     speaks on each kick. the moment the user touches anything or
+//     the cursor drifts, he releases with his current tangential
+//     velocity and transitions to flung.
 class CursorSwingState : public State
 {
 public:
@@ -1820,31 +1831,47 @@ public:
     {
         const QPoint cursor = QCursor::pos();
         c.setRappelAnchor(cursor.x(), cursor.y());
-        c.animator().setAnimation(QStringLiteral("hang"));
-        c.speakRandom({
-            QStringLiteral("wheeee"),
-            QStringLiteral("look at this"),
-            QStringLiteral("swinging"),
-            QStringLiteral("from your cursor"),
-            QStringLiteral("WHEEE"),
-            QStringLiteral("physics"),
-            QStringLiteral("hi cursor"),
-        }, 1800);
-
-        m_L = 120.0;
-        // start him HANGING straight down from the cursor with a
-        // small lateral kick to begin the swing
-        m_theta = 0.0;
-        m_thetaVel = 1.6; // rad/sec — ~half a radian first tick
-
-        // snap position onto the rope's bottom
-        rappel::positionFromTheta(c, m_L, m_theta);
-
-        // record the cursor position so we can detect movement relative
-        // to the anchor (msSinceLastInput doesnt cover silent cursor
-        // shifts by other processes)
         m_anchorStart = cursor;
         m_kickCooldown = 0;
+        m_approachShotMs = 0;
+        m_targetL = 120.0;
+
+        // compute current distance from creechrs hand to the cursor
+        const QPointF hand = rappel::handPoint(c);
+        const double dx = hand.x() - cursor.x();
+        const double dy = hand.y() - cursor.y();
+        m_L = std::sqrt(dx * dx + dy * dy);
+        m_theta = std::atan2(dx, dy);
+        m_thetaVel = 0.0;
+
+        if (m_L <= m_targetL + 20) {
+            // already close enough — skip the approach and just swing
+            if (m_L < 60.0) m_L = 60.0;
+            m_phase = Phase::Swing;
+            c.animator().setAnimation(QStringLiteral("hang"));
+            m_thetaVel = 1.6;
+            c.speakRandom({
+                QStringLiteral("wheeee"),
+                QStringLiteral("look at this"),
+                QStringLiteral("swinging"),
+                QStringLiteral("physics"),
+                QStringLiteral("WHEEE"),
+                QStringLiteral("hi cursor"),
+            }, 1800);
+        } else {
+            // approach: shoot the grapple, then climb the rope
+            m_phase = Phase::Approach;
+            c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
+            c.speakRandom({
+                QStringLiteral("grapple out"),
+                QStringLiteral("hook ho"),
+                QStringLiteral("gotcha cursor"),
+                QStringLiteral("hold still"),
+                QStringLiteral("aim"),
+                QStringLiteral("steady"),
+                QStringLiteral("INCOMING"),
+            }, 1500);
+        }
     }
 
     void exit(Creechr& c, const WorldContext&) override
@@ -1856,49 +1883,96 @@ public:
     {
         // exit if the user came back
         if (world.msSinceLastInput < 600) {
-            // rope releases — gravity takes over via flung
-            // use his current tangential velocity so the release
-            // feels continuous instead of a dead drop
-            const double tangSpeed = m_thetaVel * m_L;
-            const double vx = tangSpeed *  std::cos(m_theta);
-            const double vy = tangSpeed * -std::sin(m_theta);
-            c.setVelocity({ vx, vy });
+            releaseRope(c);
             return QStringLiteral("flung");
         }
-        // or if the cursor drifted more than a little
         const QPoint cursor = QCursor::pos();
         const int dxCursor = cursor.x() - m_anchorStart.x();
         const int dyCursor = cursor.y() - m_anchorStart.y();
         if (dxCursor * dxCursor + dyCursor * dyCursor > 8 * 8) {
-            const double tangSpeed = m_thetaVel * m_L;
-            const double vx = tangSpeed *  std::cos(m_theta);
-            const double vy = tangSpeed * -std::sin(m_theta);
-            c.setVelocity({ vx, vy });
+            releaseRope(c);
             return QStringLiteral("flung");
         }
 
         const double dt = deltaMs / 1000.0;
 
-        // pendulum integration. VERY low damping so the swing doesnt
-        // die out on its own within a few seconds — the whole point
-        // is he keeps going until interrupted.
-        constexpr double kG = 1500.0;
-        constexpr double kDamp = 0.12;
-        const double aTheta = -(kG / m_L) * std::sin(m_theta) - kDamp * m_thetaVel;
-        m_thetaVel += aTheta * dt;
-        m_theta    += m_thetaVel * dt;
-        // clamp for numerical safety
-        if (m_thetaVel > 8.0)  m_thetaVel = 8.0;
-        if (m_thetaVel < -8.0) m_thetaVel = -8.0;
+        if (m_phase == Phase::Approach) {
+            // hold the hook-toss pose for the grab anim duration
+            m_approachShotMs += deltaMs;
+            if (m_approachShotMs < 380) {
+                // pendulum runs but L doesnt shrink yet — creechr
+                // dangles on a long rope briefly before pulling up
+                integratePendulum(dt, /*damping*/0.25);
+                rappel::positionFromTheta(c, m_L, m_theta);
+                return {};
+            }
+            // hook has landed. switch to climb anim and start pulling
+            // the rope in.
+            if (c.animator().currentAnimation() != QLatin1String("climb_up")) {
+                // pick climb_up vs climb_down based on whether the
+                // anchor is above or below creechr's current position
+                const bool anchorAbove = c.rappelAnchorY() < static_cast<int>(c.position().y());
+                c.animator().setAnimation(anchorAbove
+                    ? QStringLiteral("climb_up")
+                    : QStringLiteral("climb_down"));
+            }
 
-        // if the swing is about to die out, give him a tiny push. this
-        // way he keeps going indefinitely while the user is away.
+            // shrink L toward the target swing length
+            constexpr double kClimbSpeed = 110.0;
+            m_L -= kClimbSpeed * dt;
+            if (m_L <= m_targetL) {
+                m_L = m_targetL;
+                m_phase = Phase::Swing;
+                c.animator().setAnimation(QStringLiteral("hang"));
+                // preserve momentum from the approach pendulum if it
+                // built up any; otherwise kick him going
+                if (std::abs(m_thetaVel) < 0.4) {
+                    m_thetaVel = (m_thetaVel < 0 ? -1.6 : 1.6);
+                } else {
+                    m_thetaVel *= 1.2;
+                }
+                c.speakRandom({
+                    QStringLiteral("wheeee!"),
+                    QStringLiteral("LOOK AT ME"),
+                    QStringLiteral("swinging time"),
+                    QStringLiteral("WHEEEE"),
+                    QStringLiteral("physics!"),
+                    QStringLiteral("im doing it"),
+                }, 1600);
+            } else {
+                // continue integrating pendulum during the climb
+                integratePendulum(dt, /*damping*/0.25);
+            }
+            rappel::positionFromTheta(c, m_L, m_theta);
+            return {};
+        }
+
+        // === Swing phase ===
+        integratePendulum(dt, /*damping*/0.12);
+
+        // self-kick with speech when the swing amplitude dies out.
+        // each kick announces itself so the user sees motion + a
+        // bubble every ~2 seconds while the swing is going.
         m_kickCooldown -= deltaMs;
         if (m_kickCooldown <= 0
             && std::abs(m_thetaVel) < 0.35
             && std::abs(m_theta) < 0.20) {
             m_thetaVel = (QRandomGenerator::global()->bounded(2) == 0) ? 1.8 : -1.8;
             m_kickCooldown = 2000;
+            c.speakRandom({
+                QStringLiteral("more!"),
+                QStringLiteral("again"),
+                QStringLiteral("push!"),
+                QStringLiteral("wheee!"),
+                QStringLiteral("keep going"),
+                QStringLiteral("harder"),
+                QStringLiteral("one more"),
+                QStringLiteral("hahaha"),
+                QStringLiteral("MORE"),
+                QStringLiteral("weeeee"),
+                QStringLiteral("kick"),
+                QStringLiteral("yes"),
+            }, 1400);
         }
 
         rappel::positionFromTheta(c, m_L, m_theta);
@@ -1906,11 +1980,37 @@ public:
     }
 
 private:
+    enum class Phase { Approach, Swing };
+
+    void integratePendulum(double dt, double damping)
+    {
+        const double aTheta = -(rappel::kGravity / m_L) * std::sin(m_theta)
+                              - damping * m_thetaVel;
+        m_thetaVel += aTheta * dt;
+        m_theta    += m_thetaVel * dt;
+        if (m_thetaVel > 8.0)  m_thetaVel = 8.0;
+        if (m_thetaVel < -8.0) m_thetaVel = -8.0;
+    }
+
+    void releaseRope(Creechr& c)
+    {
+        // convert current angular velocity to linear so the flung
+        // transition feels continuous — if he was swinging rightward
+        // when the rope released, he flies rightward and down
+        const double tangSpeed = m_thetaVel * m_L;
+        const double vx = tangSpeed *  std::cos(m_theta);
+        const double vy = tangSpeed * -std::sin(m_theta);
+        c.setVelocity({ vx, vy });
+    }
+
+    Phase m_phase = Phase::Approach;
     double m_L = 120.0;
+    double m_targetL = 120.0;
     double m_theta = 0.0;
     double m_thetaVel = 0.0;
     QPoint m_anchorStart;
     int m_kickCooldown = 0;
+    int m_approachShotMs = 0;
 };
 
 // nap. just sit there with eyes closed. periodically emits a small

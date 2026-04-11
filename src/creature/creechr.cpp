@@ -728,13 +728,38 @@ public:
         // pull the rope in
         m_L -= rappel::kClimbSpeed * dt;
         if (m_L < 14.0) {
-            // arrived at the anchor — snap to a position where his
-            // feet are at anchor.y (top of the target window)
-            const int feetY = c.rappelAnchorY() - kSpriteHeight;
-            c.setPosition({ static_cast<double>(c.rappelAnchorX() - kSpriteWidth / 2),
+            // arrived at the anchor — snap to a position INSIDE the
+            // target window. the anchor is at one of the window's top
+            // corners; we need to find which window and offset creechr
+            // so his bbox sits on top of the window rather than
+            // straddling the corner (which would make hasPlatformUnder
+            // reject the landing and immediately drop him). find the
+            // window whose top matches the anchor y, figure out whether
+            // the anchor is the LEFT or RIGHT corner, and offset
+            // accordingly.
+            const int ax = c.rappelAnchorX();
+            const int ay = c.rappelAnchorY();
+            int landX = ax - kSpriteWidth / 2; // fallback
+            for (const QRect& w : world.windowRects) {
+                if (qAbs(w.top() - ay) > 6) continue;
+                if (qAbs(w.left() - ax) <= 8) {
+                    // left corner — stand just inside the window's left edge
+                    landX = w.left() + 4;
+                    break;
+                }
+                if (qAbs(w.right() - ax) <= 8) {
+                    // right corner — stand just inside the window's right edge
+                    landX = w.right() - kSpriteWidth - 4;
+                    break;
+                }
+            }
+            const int feetY = ay - kSpriteHeight;
+            c.setPosition({ static_cast<double>(landX),
                             static_cast<double>(feetY) });
             c.setFloorY(feetY);
             c.clearRappelAnchor();
+            LOG_DEBUG(QStringLiteral("rappel_climb: landed at (%1,%2) (anchor was %3,%4)")
+                .arg(landX).arg(feetY).arg(ax).arg(ay));
             return QStringLiteral("walk");
         }
 
@@ -743,23 +768,19 @@ public:
                               - rappel::kClimbDamping * m_thetaVel;
         m_thetaVel += aTheta * dt;
         m_theta    += m_thetaVel * dt;
+        // clamp angular velocity to prevent numerical explosion as L
+        // shrinks (the system gets stiffer — (g/L) grows — and a naive
+        // euler step can go unstable). cap at ~6 rad/sec which is
+        // plenty for any visually-plausible swing.
+        if (m_thetaVel > 6.0)  m_thetaVel = 6.0;
+        if (m_thetaVel < -6.0) m_thetaVel = -6.0;
 
-        // candidate position
-        const QPointF anchor(c.rappelAnchorX(), c.rappelAnchorY());
-        const double hx = anchor.x() + m_L * std::sin(m_theta);
-        const double hy = anchor.y() + m_L * std::cos(m_theta);
-        const QRect bbox(static_cast<int>(hx - kSpriteWidth / 2.0),
-                         static_cast<int>(hy - rappel::kHandOffsetY),
-                         kSpriteWidth, kSpriteHeight);
-
-        if (rappel::wallCollision(bbox, world,
-                                  c.rappelAnchorX(), c.rappelAnchorY())) {
-            // bounce — reverse angular velocity with restitution
-            m_thetaVel = -m_thetaVel * rappel::kBounceLoss;
-            c.spawnPuff(QPointF(hx, hy), 3, QColor(180, 170, 165, 200), 280);
-        } else {
-            rappel::positionFromTheta(c, m_L, m_theta);
-        }
+        // compute position. NO wall collision check — user explicitly
+        // asked for rappel-up to pass through window edges. bouncing
+        // off walls while climbing looked like the rope was a fuse
+        // and then he teleported to the top and fell. phases through
+        // now, looks like magic, works.
+        rappel::positionFromTheta(c, m_L, m_theta);
         return {};
     }
 

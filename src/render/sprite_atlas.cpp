@@ -42,6 +42,7 @@ QColor parseBodyColorEnv()
 
 const QColor kBody = parseBodyColorEnv();
 const QColor kInk  ( 20,  0,  15);   // outline / dark detail
+const QColor kHalo (255, 255, 255);  // white halo for dark-mode visibility
 const QColor kEye  (255, 255, 255);
 const QColor kPupil(  0,   0,   0);
 const QColor kTeeth(255, 240, 230);
@@ -148,6 +149,11 @@ void drawHead(QPainter& p, const QRect& cell, const CreechrPose& pose)
     }
 }
 
+// arms and legs get a two-pass outline: a 4px-wide white halo first
+// so they remain visible on dark wallpapers, then the 2px dark ink
+// on top. same trick comic book artists use. without it, kInk (near
+// black) lines disappear into dark-mode desktops completely and
+// creechr looks like a disembodied pink body blob.
 void drawArms(QPainter& p, const QRect& cell, const CreechrPose& pose)
 {
     const int by = cell.top() + 4 + pose.bodyBob;
@@ -156,36 +162,45 @@ void drawArms(QPainter& p, const QRect& cell, const CreechrPose& pose)
     const int rightShoulderX = cell.left() + 38;
     const int shoulderY      = by + 13;
 
-    p.setPen(QPen(kInk, 2));
-
     // left arm: shoulder → elbow → hand. simple two-segment.
-    {
-        const int sx = leftShoulderX;
-        const int sy = shoulderY;
-        const int hx = sx - 2 + pose.leftArm.dx;
-        const int hy = sy + pose.leftArm.dy;
-        // elbow midway, biased outward so it bends naturally
-        const int ex = (sx + hx) / 2 - 1;
-        const int ey = (sy + hy) / 2 + 1;
-        p.drawLine(sx, sy, ex, ey);
-        p.drawLine(ex, ey, hx, hy);
-        // hand: little 2x2 dot at the end
-        p.fillRect(QRect(hx - 1, hy - 1, 3, 3), kBody);
-        p.drawRect(QRect(hx - 1, hy - 1, 2, 2));
-    }
+    const int lsx = leftShoulderX;
+    const int lsy = shoulderY;
+    const int lhx = lsx - 2 + pose.leftArm.dx;
+    const int lhy = lsy + pose.leftArm.dy;
+    // elbow midway, biased outward so it bends naturally
+    const int lex = (lsx + lhx) / 2 - 1;
+    const int ley = (lsy + lhy) / 2 + 1;
+
     // right arm: same drill, mirrored
-    {
-        const int sx = rightShoulderX;
-        const int sy = shoulderY;
-        const int hx = sx + 2 + pose.rightArm.dx;
-        const int hy = sy + pose.rightArm.dy;
-        const int ex = (sx + hx) / 2 + 1;
-        const int ey = (sy + hy) / 2 + 1;
-        p.drawLine(sx, sy, ex, ey);
-        p.drawLine(ex, ey, hx, hy);
-        p.fillRect(QRect(hx - 1, hy - 1, 3, 3), kBody);
-        p.drawRect(QRect(hx - 1, hy - 1, 2, 2));
-    }
+    const int rsx = rightShoulderX;
+    const int rsy = shoulderY;
+    const int rhx = rsx + 2 + pose.rightArm.dx;
+    const int rhy = rsy + pose.rightArm.dy;
+    const int rex = (rsx + rhx) / 2 + 1;
+    const int rey = (rsy + rhy) / 2 + 1;
+
+    // white halo pass (4px)
+    p.setPen(QPen(kHalo, 4));
+    p.drawLine(lsx, lsy, lex, ley);
+    p.drawLine(lex, ley, lhx, lhy);
+    p.drawLine(rsx, rsy, rex, rey);
+    p.drawLine(rex, rey, rhx, rhy);
+
+    // ink pass (2px) on top
+    p.setPen(QPen(kInk, 2));
+    p.drawLine(lsx, lsy, lex, ley);
+    p.drawLine(lex, ley, lhx, lhy);
+    p.drawLine(rsx, rsy, rex, rey);
+    p.drawLine(rex, rey, rhx, rhy);
+
+    // hands: white halo rect under each, then body + ink stroke on top
+    p.fillRect(QRect(lhx - 2, lhy - 2, 5, 5), kHalo);
+    p.fillRect(QRect(lhx - 1, lhy - 1, 3, 3), kBody);
+    p.drawRect(QRect(lhx - 1, lhy - 1, 2, 2));
+
+    p.fillRect(QRect(rhx - 2, rhy - 2, 5, 5), kHalo);
+    p.fillRect(QRect(rhx - 1, rhy - 1, 3, 3), kBody);
+    p.drawRect(QRect(rhx - 1, rhy - 1, 2, 2));
 }
 
 void drawLegs(QPainter& p, const QRect& cell, const CreechrPose& pose)
@@ -194,32 +209,41 @@ void drawLegs(QPainter& p, const QRect& cell, const CreechrPose& pose)
     const int leftHipX  = cell.left() + 17;
     const int rightHipX = cell.left() + 30;
 
-    p.setPen(QPen(kInk, 2));
+    // left leg
+    const int lhx_ = leftHipX;
+    const int lhy_ = hipY;
+    const int lfx = lhx_ + pose.leftLeg.dx;
+    const int lfy = lhy_ + 14 + pose.leftLeg.dy;
+    const int lkx = (lhx_ + lfx) / 2;
+    const int lky = (lhy_ + lfy) / 2 + 1;
 
-    // left leg: hip → knee → foot
-    {
-        const int hx = leftHipX;
-        const int hy = hipY;
-        const int fx = hx + pose.leftLeg.dx;
-        const int fy = hy + 14 + pose.leftLeg.dy;
-        const int kx = (hx + fx) / 2;
-        const int ky = (hy + fy) / 2 + 1;
-        p.drawLine(hx, hy, kx, ky);
-        p.drawLine(kx, ky, fx, fy);
-        // foot: small horizontal stub so he has visible feet
-        p.fillRect(QRect(fx - 2, fy - 1, 5, 2), kInk);
-    }
-    {
-        const int hx = rightHipX;
-        const int hy = hipY;
-        const int fx = hx + pose.rightLeg.dx;
-        const int fy = hy + 14 + pose.rightLeg.dy;
-        const int kx = (hx + fx) / 2;
-        const int ky = (hy + fy) / 2 + 1;
-        p.drawLine(hx, hy, kx, ky);
-        p.drawLine(kx, ky, fx, fy);
-        p.fillRect(QRect(fx - 2, fy - 1, 5, 2), kInk);
-    }
+    // right leg
+    const int rhx_ = rightHipX;
+    const int rhy_ = hipY;
+    const int rfx = rhx_ + pose.rightLeg.dx;
+    const int rfy = rhy_ + 14 + pose.rightLeg.dy;
+    const int rkx = (rhx_ + rfx) / 2;
+    const int rky = (rhy_ + rfy) / 2 + 1;
+
+    // white halo pass
+    p.setPen(QPen(kHalo, 4));
+    p.drawLine(lhx_, lhy_, lkx, lky);
+    p.drawLine(lkx, lky, lfx, lfy);
+    p.drawLine(rhx_, rhy_, rkx, rky);
+    p.drawLine(rkx, rky, rfx, rfy);
+
+    // ink pass
+    p.setPen(QPen(kInk, 2));
+    p.drawLine(lhx_, lhy_, lkx, lky);
+    p.drawLine(lkx, lky, lfx, lfy);
+    p.drawLine(rhx_, rhy_, rkx, rky);
+    p.drawLine(rkx, rky, rfx, rfy);
+
+    // feet: small horizontal ink stubs with a white halo underneath
+    p.fillRect(QRect(lfx - 3, lfy - 2, 7, 4), kHalo);
+    p.fillRect(QRect(lfx - 2, lfy - 1, 5, 2), kInk);
+    p.fillRect(QRect(rfx - 3, rfy - 2, 7, 4), kHalo);
+    p.fillRect(QRect(rfx - 2, rfy - 1, 5, 2), kInk);
 }
 
 void drawCreechr(QPainter& p, const QRect& cell, const CreechrPose& pose)

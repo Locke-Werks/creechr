@@ -127,7 +127,10 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
     const QPoint widgetOrigin = widgetOriginEarly;
 
     // rappel line, drawn UNDER creechr so it looks like the rope comes
-    // from inside his hands rather than over them
+    // from inside his hands rather than over them. two-pass outline:
+    // wide white halo first so it's visible on dark wallpaper, then
+    // the dark rope on top. same trick as the arms/legs in the
+    // sprite atlas.
     if (m_creechr->rappelActive()) {
         const QPoint anchor(m_creechr->rappelAnchorX(), m_creechr->rappelAnchorY());
         // line origin: top-center of creechr's sprite, where his hands
@@ -136,13 +139,30 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
             static_cast<int>(m_creechr->position().x()) + 24,
             static_cast<int>(m_creechr->position().y()) + 2
         );
-        QPen pen(QColor(20, 0, 15, 230));
-        pen.setWidth(2);
-        p.setPen(pen);
-        p.drawLine(hands - widgetOrigin, anchor - widgetOrigin);
-        // small grappling-hook dot at the anchor
-        p.fillRect(QRect(anchor.x() - widgetOrigin.x() - 2,
-                         anchor.y() - widgetOrigin.y() - 2, 5, 5),
+        const QPoint handsLocal  = hands  - widgetOrigin;
+        const QPoint anchorLocal = anchor - widgetOrigin;
+
+        p.setRenderHint(QPainter::Antialiasing, true);
+        // white halo pass (4 px, slightly translucent so it doesnt
+        // overpower light wallpapers)
+        QPen haloPen(QColor(255, 255, 255, 220));
+        haloPen.setWidth(4);
+        haloPen.setCapStyle(Qt::RoundCap);
+        p.setPen(haloPen);
+        p.drawLine(handsLocal, anchorLocal);
+        // dark rope pass (2 px) on top
+        QPen ropePen(QColor(20, 0, 15, 240));
+        ropePen.setWidth(2);
+        ropePen.setCapStyle(Qt::RoundCap);
+        p.setPen(ropePen);
+        p.drawLine(handsLocal, anchorLocal);
+        p.setRenderHint(QPainter::Antialiasing, false);
+
+        // grappling-hook dot at the anchor: white halo underneath,
+        // dark center on top, so its visible against any backdrop
+        p.fillRect(QRect(anchorLocal.x() - 3, anchorLocal.y() - 3, 7, 7),
+                   QColor(255, 255, 255, 220));
+        p.fillRect(QRect(anchorLocal.x() - 2, anchorLocal.y() - 2, 5, 5),
                    QColor(20, 0, 15));
     }
 

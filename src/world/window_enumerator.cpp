@@ -151,12 +151,65 @@ WindowEnumerator::WindowEnumerator() = default;
 
 QVector<WindowInfo> WindowEnumerator::snapshot()
 {
-    QVector<WindowInfo> result;
-    result.reserve(32);
-    EnumState st { &result, m_self };
-    // EnumWindows walks top-level windows in z-order (topmost first)
+    QVector<WindowInfo> raw;
+    raw.reserve(32);
+    EnumState st { &raw, m_self };
+    // EnumWindows walks top-level windows in z-order (topmost first).
+    // raw[0] is the topmost visible top-level window, raw[n-1] is the
+    // bottom-most.
     EnumWindows(&enumProc, reinterpret_cast<LPARAM>(&st));
-    return result;
+
+    // OCCLUSION FILTER.
+    //
+    // creechr should only interact with windows the USER can actually
+    // see. a terminal sitting fully behind chrome is invisible and
+    // rappelling to it looks like he's climbing an invisible ladder.
+    //
+    // for each window at index i, we test three representative points
+    // along its TOP edge (creechr walks on the top edge, climbs its
+    // corners, and rappels to its corners, so the top edge is what
+    // matters). if ALL three points are contained inside some HIGHER
+    // z-order window (j < i), the window is effectively occluded and
+    // we drop it from the snapshot. if at least one point is clear,
+    // we keep it.
+    //
+    // this misses the case where a window has a visible sliver in the
+    // MIDDLE of its top edge but the three probe points are covered.
+    // accept that for v0.x — the common case (fully behind a browser)
+    // is what the user cares about.
+    QVector<WindowInfo> visible;
+    visible.reserve(raw.size());
+    for (int i = 0; i < raw.size(); ++i) {
+        const QRect& me = raw[i].frame;
+        if (me.isEmpty()) continue;
+
+        // probe points: left/center/right of the top edge, nudged 4 px
+        // down so they're inside the window rather than exactly on it
+        const QPoint probes[3] = {
+            QPoint(me.left()  + 4,             me.top() + 4),
+            QPoint((me.left() + me.right()) / 2, me.top() + 4),
+            QPoint(me.right() - 4,             me.top() + 4),
+        };
+
+        bool anyVisible = false;
+        for (const QPoint& p : probes) {
+            bool covered = false;
+            for (int j = 0; j < i; ++j) {
+                if (raw[j].frame.contains(p)) {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered) {
+                anyVisible = true;
+                break;
+            }
+        }
+        if (anyVisible) {
+            visible.push_back(raw[i]);
+        }
+    }
+    return visible;
 }
 
 QVector<QRect> WindowEnumerator::snapshotRects()

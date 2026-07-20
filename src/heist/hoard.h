@@ -13,7 +13,9 @@
 #include <QJsonObject>
 #include <QPixmap>
 #include <QPoint>
+#include <QRect>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <functional>
 
@@ -45,6 +47,16 @@ struct HoardEntry {
 
     // for window heists
     CrHwnd hwnd = nullptr;
+
+    // crash insurance, v2. enough identity to find the window again on
+    // the NEXT launch, when the restore lambda below is long dead:
+    // hwnd value + class + pid confirm it if the handle survived, and
+    // class + exact non-empty title can hunt it down if it didnt.
+    QRect originFrame;    // full frame for SetWindowPos, physical px
+    QString className;
+    QString title;
+    quint32 pid = 0;
+    QString opaqueId;     // dom heists: the extension-side element id
 
     // restore callback. invoked exactly once. set to whatever undoes
     // this particular theft (ShowWindow + SetWindowPos for windows,
@@ -86,8 +98,20 @@ public:
     void persist();
     void loadFromDisk();
 
+    // dom orphans cant be restored until a browser bridge connects.
+    // loadFromDisk parks their ids here; the app drains this and fires
+    // requestRestore once the extension says hello.
+    QStringList takePendingDomRestores();
+
 private:
+    // try to put every loaded orphan back (window: revalidate hwnd or
+    // hunt by class+title, dom: queue for the bridge). clears the
+    // entries either way; a window we cant find is a window we cant
+    // find, and pretending otherwise helps nobody.
+    void attemptOrphanRestore();
+
     QVector<HoardEntry> m_entries;
+    QStringList m_pendingDomRestores;
     int m_nextId = 1;
 };
 

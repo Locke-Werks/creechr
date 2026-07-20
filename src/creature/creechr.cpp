@@ -1684,6 +1684,29 @@ public:
             e.originPos = h->originalFrame.topLeft();
             e.stashPos  = h->stashedAt;
             e.hwnd = h->target.hwnd;
+            // v2 crash-insurance identity: if we die before this entry
+            // gets restored, the next launch uses these to find the
+            // window again. see Hoard::attemptOrphanRestore.
+            e.originFrame = h->originalFrame;
+#ifdef _WIN32
+            if (h->target.kind == TargetKind::Window) {
+                HWND idh = static_cast<HWND>(h->target.hwnd);
+                if (idh && IsWindow(idh)) {
+                    wchar_t cls[256] = {};
+                    GetClassNameW(idh, cls, 256);
+                    e.className = QString::fromWCharArray(cls);
+                    wchar_t wtitle[512] = {};
+                    GetWindowTextW(idh, wtitle, 512);
+                    e.title = QString::fromWCharArray(wtitle);
+                    DWORD wpid = 0;
+                    GetWindowThreadProcessId(idh, &wpid);
+                    e.pid = wpid;
+                }
+            }
+#endif
+            if (h->target.kind == TargetKind::DomElement) {
+                e.opaqueId = h->target.opaqueId;
+            }
             const QRect orig = h->originalFrame;
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(h->target.hwnd);

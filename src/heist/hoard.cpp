@@ -9,7 +9,37 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 
+#include <string>
+
 namespace cr {
+
+#ifdef _WIN32
+namespace {
+// EnumWindows hunt for a HIDDEN top-level window with an exact class
+// and exact non-empty title. deliberately not reusing WindowEnumerator:
+// that one filters to visible windows, and here the whole point is
+// that the window we lost is invisible.
+struct OrphanSearch {
+    const wchar_t* cls = nullptr;
+    const wchar_t* title = nullptr;
+    HWND found = nullptr;
+};
+
+BOOL CALLBACK orphanEnumProc(HWND hwnd, LPARAM lp)
+{
+    auto* s = reinterpret_cast<OrphanSearch*>(lp);
+    if (IsWindowVisible(hwnd)) return TRUE; // only hunting hidden ones
+    wchar_t cls[256] = {};
+    GetClassNameW(hwnd, cls, 256);
+    if (wcscmp(cls, s->cls) != 0) return TRUE;
+    wchar_t title[512] = {};
+    GetWindowTextW(hwnd, title, 512);
+    if (wcscmp(title, s->title) != 0) return TRUE;
+    s->found = hwnd;
+    return FALSE;
+}
+} // namespace
+#endif
 
 Hoard::Hoard() = default;
 
@@ -91,9 +121,23 @@ QJsonObject Hoard::toJson() const
         o["stashY"]  = e.stashPos.y();
         o["stolenAtMs"]    = QString::number(e.stolenAtMs);
         o["returnAfterMs"] = QString::number(e.returnAfterMs);
+        // v2: enough identity to attempt a restore after a hard crash.
+        // hwnd goes in as a stringified pointer value; next boot it
+        // either still IsWindow()s (and class+pid confirm it) or the
+        // class+title hunt takes over.
+        o["hwnd"]   = QString::number(reinterpret_cast<quintptr>(e.hwnd));
+        o["frameX"] = e.originFrame.x();
+        o["frameY"] = e.originFrame.y();
+        o["frameW"] = e.originFrame.width();
+        o["frameH"] = e.originFrame.height();
+        o["cls"]    = e.className;
+        o["title"]  = e.title;
+        o["pid"]    = static_cast<qint64>(e.pid);
+        o["domId"]  = e.opaqueId;
         arr.append(o);
     }
     QJsonObject root;
+    root["version"] = 2;
     root["entries"] = arr;
     return root;
 }
@@ -112,9 +156,16 @@ void Hoard::loadFromJson(const QJsonObject& obj)
         e.stashPos  = QPoint(o.value("stashX").toInt(),  o.value("stashY").toInt());
         e.stolenAtMs    = o.value("stolenAtMs").toString().toLongLong();
         e.returnAfterMs = o.value("returnAfterMs").toString().toLongLong();
-        // restore lambda is not persisted — orphan entries from a previous
-        // run can't be auto-restored after a crash because we no longer
-        // hold the hwnd. logged for the user to know about.
+        // v2 identity fields. absent in v1 files, which leaves them
+        // empty/zero and the orphan restore just logs a loss.
+        e.hwnd = reinterpret_cast<CrHwnd>(
+            static_cast<quintptr>(o.value("hwnd").toString().toULongLong()));
+        e.originFrame = QRect(o.value("frameX").toInt(), o.value("frameY").toInt(),
+                              o.value("frameW").toInt(), o.value("frameH").toInt());
+        e.className = o.value("cls").toString();
+        e.title     = o.value("title").toString();
+        e.pid       = static_cast<quint32>(o.value("pid").toInteger());
+        e.opaqueId  = o.value("domId").toString();
         m_entries.push_back(std::move(e));
     }
 }
@@ -141,14 +192,91 @@ void Hoard::loadFromDisk()
     loadFromJson(doc.object());
     if (!m_entries.isEmpty()) {
         LOG_WARN(QStringLiteral(
-            "hoard: found %1 orphan entries from previous run — these "
-            "are dead, restore lambdas can't be reconstructed. clearing.")
+            "hoard: %1 orphan entries from a previous run. last time "
+            "somebody died mid-heist. attempting restores.")
             .arg(m_entries.size()));
-        // we can't actually restore them because we don't have the live
-        // HWNDs. log it and move on. user might have lost a window. sorry.
-        m_entries.clear();
-        persist();
+        attemptOrphanRestore();
     }
+}
+
+void Hoard::attemptOrphanRestore()
+{
+#ifdef _WIN32
+    for (const auto& e : m_entries) {
+        if (e.kind == HoardKind::Dom) {
+            if (!e.opaqueId.isEmpty()) {
+                m_pendingDomRestores.push_back(e.opaqueId);
+                LOG_INFO(QStringLiteral("hoard: dom orphan %1 queued for the bridge")
+                    .arg(e.opaqueId));
+            }
+            continue;
+        }
+        if (e.kind != HoardKind::Window) {
+            continue; // cursor/uia thefts never modified anything
+        }
+
+        HWND h = e.hwnd;
+        bool identityOk = false;
+        if (h && IsWindow(h)) {
+            // hwnd values recycle across sessions, so the handle alone
+            // proves nothing. class + pid double check makes a false
+            // positive effectively impossible.
+            wchar_t cls[256] = {};
+            GetClassNameW(h, cls, 256);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(h, &pid);
+            identityOk = (QString::fromWCharArray(cls) == e.className)
+                      && (pid == e.pid) && e.pid != 0;
+        }
+        if (!identityOk && !e.className.isEmpty() && !e.title.isEmpty()) {
+            // stale handle. hunt for an invisible top-level with the
+            // exact class AND exact non-empty title. the non-empty
+            // title requirement is what keeps this from SW_SHOWing one
+            // of chrome's army of deliberately hidden windows.
+            const std::wstring wcls = e.className.toStdWString();
+            const std::wstring wtitle = e.title.toStdWString();
+            OrphanSearch s;
+            s.cls = wcls.c_str();
+            s.title = wtitle.c_str();
+            EnumWindows(orphanEnumProc, reinterpret_cast<LPARAM>(&s));
+            if (s.found) {
+                h = s.found;
+                identityOk = true;
+                LOG_INFO(QStringLiteral("hoard: orphan '%1' found by class+title hunt")
+                    .arg(e.label));
+            }
+        }
+
+        if (identityOk && h && !IsWindowVisible(h)) {
+            if (e.originFrame.isValid()) {
+                SetWindowPos(h, HWND_TOP,
+                             e.originFrame.left(), e.originFrame.top(),
+                             e.originFrame.width(), e.originFrame.height(),
+                             SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            } else {
+                // v1 entry: no stored frame, just un-hide it in place
+                SetWindowPos(h, HWND_TOP, e.originPos.x(), e.originPos.y(), 0, 0,
+                             SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+            LOG_INFO(QStringLiteral("hoard: restored orphan '%1'").arg(e.label));
+        } else if (identityOk) {
+            LOG_INFO(QStringLiteral("hoard: orphan '%1' is already visible, fine")
+                .arg(e.label));
+        } else {
+            LOG_WARN(QStringLiteral("hoard: orphan '%1' is gone for good. sorry.")
+                .arg(e.label));
+        }
+    }
+#endif
+    m_entries.clear();
+    persist();
+}
+
+QStringList Hoard::takePendingDomRestores()
+{
+    QStringList out;
+    out.swap(m_pendingDomRestores);
+    return out;
 }
 
 } // namespace cr

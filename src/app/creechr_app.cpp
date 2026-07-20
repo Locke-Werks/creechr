@@ -188,6 +188,21 @@ void CreechrApp::start()
     m_extTargets = std::make_unique<cr::ExtensionTargetProvider>(m_extPipe.get(), this);
     m_creechr->setExtensionProvider(m_extTargets.get());
 
+    // dom orphans from a crashed run cant be restored until a browser
+    // bridge actually connects. fire on every future connect; the
+    // content script ignores ids it doesnt recognize.
+    const QStringList domOrphans = m_hoard->takePendingDomRestores();
+    if (!domOrphans.isEmpty()) {
+        connect(m_extPipe.get(), &cr::ExtensionPipeServer::bridgeConnected,
+                this, [this, domOrphans]() {
+            for (const QString& id : domOrphans) {
+                m_extTargets->requestRestore(id);
+            }
+            LOG_INFO(QStringLiteral("hoard: pushed %1 dom orphan restores to the bridge")
+                .arg(domOrphans.size()));
+        });
+    }
+
     // give creechr a real world before letting his states fire enter()
     cr::WorldContext bootstrapWorld;
     QRect db;

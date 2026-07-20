@@ -12,6 +12,9 @@
 // flags got reset by some qt update. check applyClickThroughFlags().
 #pragma once
 
+#include <QRect>
+#include <QRegion>
+#include <QString>
 #include <QWidget>
 
 namespace cr {
@@ -32,6 +35,15 @@ public:
     void setCreechr(const cr::Creechr* c) { m_creechr = c; }
     void setAtlas(const cr::SpriteAtlas* a) { m_atlas = a; }
 
+    // dirty-region update: computes the rects the scene currently
+    // occupies, unions with last frame's (so old positions get
+    // erased), and invalidates only that. skips the frame entirely
+    // when nothing observable changed. this window spans EVERY
+    // monitor; repainting all of it at 60Hz for a 48px goblin was
+    // most of our cpu bill. CREECHR_FULL_REPAINT=1 restores the old
+    // behavior if partial updates ever ghost.
+    void updateScene();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -46,6 +58,26 @@ private:
     // restyle, so we set them again, manually, after every show().
     void applyClickThroughFlags();
 
+    // current scene footprint in virtual-desktop coords
+    QRegion computeSceneRegion() const;
+
     const cr::Creechr* m_creechr = nullptr;
     const cr::SpriteAtlas* m_atlas = nullptr;
+
+    QRegion m_lastSceneRegion;
+
+    // cheap change stamp: when this matches last tick AND nothing
+    // inherently-animated (particles, sinking loot) is alive, the
+    // frame is skipped outright
+    struct SceneStamp {
+        QRect creature;
+        QRect frameSrc;
+        QString speech;
+        QPoint anchor;
+        QPoint stash;
+        int trophies = 0;
+        bool carried = false;
+        bool operator==(const SceneStamp& o) const = default;
+    };
+    SceneStamp m_lastStamp;
 };

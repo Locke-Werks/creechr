@@ -105,6 +105,7 @@ private:
     QTimer* m_tickTimer = nullptr;
     qint64 m_lastTickMs = 0;
     qint64 m_lastWorldRefreshMs = 0;
+    qint64 m_calmSinceMs = 0;
     bool m_paused = false;
     bool m_extPipeOk = false;
     cr::Settings m_settings;

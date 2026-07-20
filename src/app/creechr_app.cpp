@@ -703,5 +703,35 @@ void CreechrApp::onTick()
     // visibly continuous instead of hopping in 100ms chunks.
     m_creechr->tickLogic(dt, g_cachedWorld);
     m_creechr->tickRender(dt);
-    m_overlay->update();
+    m_overlay->updateScene();
+
+    // adaptive tick: when he's just standing there and nothing on
+    // screen is in motion, 60Hz is heating the room for no one. drop
+    // to 30 after 3 calm seconds; snap back to 60 the moment anything
+    // moves. all timing is deltaMs-driven and the heist roll is
+    // time-based, so cadence survives the rate change. fullscreen
+    // (overlay hidden, logic frozen) idles at 5Hz.
+    int wantInterval = 16;
+    if (g_cachedWorld.fullscreenActive) {
+        wantInterval = 200;
+    } else if (m_settings.adaptiveTick) {
+        const QString st = m_creechr->stateMachine().currentName();
+        const bool calm = (st == QLatin1String("idle") || st == QLatin1String("sleep"))
+            && !m_creechr->heist()
+            && !m_creechr->cursorGlideActive()
+            && !m_creechr->rappelActive()
+            && m_creechr->particles().isEmpty()
+            && m_creechr->sinkingItems().isEmpty()
+            && m_creechr->currentSpeech().isEmpty();
+        if (!calm) {
+            m_calmSinceMs = 0;
+        } else if (m_calmSinceMs == 0) {
+            m_calmSinceMs = now;
+        } else if (now - m_calmSinceMs > 3000) {
+            wantInterval = 33;
+        }
+    }
+    if (m_tickTimer && m_tickTimer->interval() != wantInterval) {
+        m_tickTimer->setInterval(wantInterval);
+    }
 }

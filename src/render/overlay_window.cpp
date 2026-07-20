@@ -90,6 +90,119 @@ void OverlayWindow::applyClickThroughFlags()
 #endif
 }
 
+namespace {
+
+// speech bubble body rect in virtual-desktop coords. ONE function used
+// by both painting and the dirty-region math, because the two drifting
+// apart means long lines leave ghost trails.
+QRect speechBubbleBodyRect(const cr::Creechr& c, QFont f)
+{
+    const QString speech = c.currentSpeech();
+    if (speech.isEmpty()) return {};
+    f.setPointSize(9);
+    f.setBold(true);
+    const QFontMetrics fm(f);
+    const int bubW = fm.horizontalAdvance(speech) + 6 * 2;
+    const int bubH = fm.height() + 3 * 2;
+    const int cx = static_cast<int>(c.position().x()) + 24;
+    const int cy = static_cast<int>(c.position().y()) - 6;
+    return QRect(cx - bubW / 2, cy - bubH, bubW, bubH);
+}
+
+} // namespace
+
+QRegion OverlayWindow::computeSceneRegion() const
+{
+    QRegion region;
+    if (!m_creechr) return region;
+
+    // creature + a margin for the halo strokes, plus the foot shadow
+    // strip below him
+    region += m_creechr->drawRect().adjusted(-8, -8, 8, 14);
+
+    if (m_creechr->rappelActive()) {
+        const QPoint anchor(m_creechr->rappelAnchorX(), m_creechr->rappelAnchorY());
+        const QPoint hands(static_cast<int>(m_creechr->position().x()) + 24,
+                           static_cast<int>(m_creechr->position().y()) + 2);
+        region += QRect(hands, anchor).normalized().adjusted(-6, -6, 6, 6);
+    }
+
+    for (const auto& pt : m_creechr->particles()) {
+        region += QRect(static_cast<int>(pt.pos.x()) - 2,
+                        static_cast<int>(pt.pos.y()) - 2, 6, 6);
+    }
+
+    // trophies are static, but they belong in the region every frame:
+    // that way when the cap evicts the oldest one, its rect is still
+    // in LAST frame's region and the union erases it. eight tiny
+    // rects, not worth being clever about.
+    for (const auto& t : m_creechr->trophies()) {
+        region += QRect(t.nestPos, t.pixmap.size()).adjusted(-2, -2, 2, 2);
+    }
+
+    for (const auto& s : m_creechr->sinkingItems()) {
+        region += QRect(static_cast<int>(s.x) - 1, static_cast<int>(s.y) - 1,
+                        s.pixmap.width() + 2, s.pixmap.height() + 2);
+    }
+
+    if (const auto* h = m_creechr->heist(); h && !h->carriedPixmap.isNull()) {
+        const QSize pms = h->carriedPixmap.size();
+        if (h->stashed) {
+            region += QRect(h->stashedAt, pms).adjusted(-2, -2, 2, 2);
+        } else {
+            const QPoint a = m_creechr->carryAnchorScreen();
+            region += QRect(a.x() - pms.width() / 2 - 2, a.y() - pms.height() / 2 - 2,
+                            pms.width() + 4, pms.height() + 4);
+        }
+    }
+
+    const QRect bubble = speechBubbleBodyRect(*m_creechr, font());
+    if (!bubble.isNull()) {
+        region += bubble.adjusted(-2, -2, 2, 8); // +8 covers the tail
+    }
+
+    return region;
+}
+
+void OverlayWindow::updateScene()
+{
+    static const bool kFullRepaint = !qgetenv("CREECHR_FULL_REPAINT").isEmpty();
+    if (kFullRepaint || !m_creechr) {
+        update();
+        return;
+    }
+
+    SceneStamp stamp;
+    stamp.creature = m_creechr->drawRect();
+    stamp.frameSrc = m_creechr->frameSrcRect();
+    stamp.speech   = m_creechr->currentSpeech();
+    stamp.anchor   = m_creechr->rappelActive()
+        ? QPoint(m_creechr->rappelAnchorX(), m_creechr->rappelAnchorY())
+        : QPoint(-1, -1);
+    const auto* h = m_creechr->heist();
+    stamp.carried  = h && !h->carriedPixmap.isNull();
+    stamp.stash    = (h && h->stashed) ? h->stashedAt : QPoint(-1, -1);
+    stamp.trophies = m_creechr->trophies().size();
+
+    // particles and sinking loot move every tick by construction, so
+    // their mere existence makes the frame dirty
+    const bool inherentlyAnimated =
+        !m_creechr->particles().isEmpty() || !m_creechr->sinkingItems().isEmpty();
+
+    const QRegion cur = computeSceneRegion();
+
+    if (!inherentlyAnimated && stamp == m_lastStamp && cur == m_lastSceneRegion) {
+        return; // nothing observable changed, skip the frame
+    }
+
+    // previous-union-current guarantees the old position gets erased
+    const QRegion dirty = (cur + m_lastSceneRegion)
+        .translated(-geometry().topLeft());
+    m_lastSceneRegion = cur;
+    m_lastStamp = stamp;
+    update(dirty);
+}
+
 void OverlayWindow::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
@@ -230,18 +343,11 @@ void OverlayWindow::paintEvent(QPaintEvent* event)
         f.setPointSize(9);
         f.setBold(true);
         p.setFont(f);
-        const QFontMetrics fm(f);
-        const int textW = fm.horizontalAdvance(speech);
-        const int textH = fm.height();
         const int padX = 6;
         const int padY = 3;
-        const int bubW = textW + padX * 2;
-        const int bubH = textH + padY * 2;
-        // anchor: just above his head, slightly offset toward his
-        // facing direction so it doesnt cover his face
-        const int cx = static_cast<int>(m_creechr->position().x()) + 24;
-        const int cy = static_cast<int>(m_creechr->position().y()) - 6;
-        const QRect bubble(cx - bubW / 2, cy - bubH, bubW, bubH);
+        // geometry comes from the same helper the dirty-region math
+        // uses, so the two can never disagree about where the bubble is
+        const QRect bubble = speechBubbleBodyRect(*m_creechr, font());
         const QRect bubbleLocal = bubble.translated(-widgetOrigin);
 
         p.setRenderHint(QPainter::Antialiasing, true);

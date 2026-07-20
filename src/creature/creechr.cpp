@@ -2,6 +2,7 @@
 #include "creature/world_context.h"
 #include "heist/bitmap_capture.h"
 #include "heist/hoard.h"
+#include "util/crash_guard.h"
 #include "render/sprite_atlas.h"
 #include "targets/extension_target_provider.h"
 #include "util/app_snark.h"
@@ -1517,6 +1518,10 @@ public:
                 HWND hwnd = static_cast<HWND>(h->target.hwnd);
                 if (hwnd && IsWindow(hwnd)) {
                     ShowWindow(hwnd, SW_HIDE);
+                    // from this exact moment until stash registers the
+                    // hoard entry, a crash would strand a hidden window
+                    // nobody knows about. the in-flight slot covers it.
+                    crashguard::setInFlight(h->target.hwnd, h->originalFrame);
                 }
             }
 #endif
@@ -1737,6 +1742,9 @@ public:
 #endif
             h->hoardId = hoard->add(e);
             h->stashed = true;
+            // the hoard's table owns this window now (add -> persist
+            // -> syncSlots), so the in-flight slot has done its job
+            crashguard::clearInFlight();
         }
         return QStringLiteral("heist_wait");
     }
@@ -2279,6 +2287,10 @@ void Creechr::clearHeist()
 {
     // settle the cursor debt first so no exit path can forget it
     returnCursorIfHeld();
+    // whatever in-flight window the heist may have been protecting is
+    // either restored or in the hoard by the time anyone clears the
+    // heist; the scratch slot must not outlive it
+    crashguard::clearInFlight();
     m_heist.reset();
 }
 

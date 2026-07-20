@@ -1,4 +1,5 @@
 #include "heist/hoard.h"
+#include "util/crash_guard.h"
 #include "util/logging.h"
 
 #include <QDateTime>
@@ -172,6 +173,21 @@ void Hoard::loadFromJson(const QJsonObject& obj)
 
 void Hoard::persist()
 {
+    // keep the crash guard's fixed table in lockstep with the entry
+    // list. persist() already runs on every mutation, so this is the
+    // one choke point and it cannot drift.
+    {
+        crashguard::GuardSlot guardTable[crashguard::kMaxSlots];
+        int n = 0;
+        for (const auto& e : m_entries) {
+            if (e.kind != HoardKind::Window) continue;
+            if (n >= crashguard::kMaxSlots) break;
+            guardTable[n].hwnd = static_cast<void*>(e.hwnd);
+            guardTable[n].frame = e.originFrame;
+            ++n;
+        }
+        crashguard::syncSlots(guardTable, n);
+    }
     QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
     QFile f(hoardPath());
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

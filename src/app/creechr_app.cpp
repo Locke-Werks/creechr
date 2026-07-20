@@ -244,6 +244,22 @@ void CreechrApp::start()
             QTimer::singleShot(ms, this, &CreechrApp::quitGracefully);
         }
     }
+
+    // dev knob: CREECHR_TEST_CRASH_MS=N crashes on purpose after N ms.
+    // exists so the crash guard can be exercised without waiting for a
+    // real bug to volunteer.
+    const QByteArray testCrash = qgetenv("CREECHR_TEST_CRASH_MS");
+    if (!testCrash.isEmpty()) {
+        bool ok = false;
+        const int ms = testCrash.toInt(&ok);
+        if (ok && ms > 0) {
+            QTimer::singleShot(ms, this, []() {
+                LOG_ERROR(QStringLiteral("CREECHR_TEST_CRASH_MS: crashing on purpose. bye"));
+                volatile int* boom = nullptr;
+                *boom = 42;
+            });
+        }
+    }
 }
 
 void CreechrApp::setPaused(bool paused)

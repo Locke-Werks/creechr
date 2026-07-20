@@ -63,6 +63,8 @@ add_executable(creechr WIN32
     src/targets/extension_target_provider.cpp
     src/util/logging.h
     src/util/logging.cpp
+    src/util/crash_guard.h
+    src/util/crash_guard.cpp
     src/util/dpi.h
     src/util/dpi.cpp
     src/util/win32_helpers.h

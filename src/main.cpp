@@ -8,11 +8,15 @@
 // line of main is doing. don't move it.
 
 #include "app/creechr_app.h"
+#include "util/crash_guard.h"
 #include "util/dpi.h"
 
 int main(int argc, char* argv[])
 {
     cr::setupDpiAwareness();
+    // crash guard goes in before anything can possibly be stolen, so
+    // there is no window (ha) where a crash strands a hidden window
+    cr::crashguard::install();
     CreechrApp app(argc, argv);
     app.start();
     return app.exec();

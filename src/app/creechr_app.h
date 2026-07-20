@@ -5,6 +5,8 @@
 #pragma once
 
 #include <QApplication>
+#include <QHash>
+#include <QString>
 #include <memory>
 
 class TrayIcon;
@@ -69,7 +71,13 @@ private:
     qint64 m_lastHeistAttemptMs = 0;
     qint64 m_lastNoticedMs = 0;
     qint64 m_lastDragReactMs = 0;
-    qint64 m_lastScareMs = 0;
+    qint64 m_lastScareMs = 0;      // post-scare cooldown timestamp
+    qint64 m_lastScaryScanMs = 0;  // scan rate limiter, updated every scan
+    // pid -> scary exe name, empty string = benign. saves the
+    // OpenProcess + QueryFullProcessImageName pair per window per
+    // scan. pids recycle, so the cache gets nuked when it grows past
+    // silly and one scan rebuilds it.
+    QHash<quint32, QString> m_scaryPidCache;
     QTimer* m_tickTimer = nullptr;
     qint64 m_lastTickMs = 0;
     qint64 m_lastWorldRefreshMs = 0;

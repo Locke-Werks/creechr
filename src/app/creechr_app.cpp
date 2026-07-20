@@ -43,7 +43,7 @@ QHash<void*, QPoint> g_prevWindowPositions;
 // secure-desktop window are NOT detectable from this process because
 // they live on a separate desktop — those will scare him only by
 // proximity to whatever launched them.
-bool isScaryWindow(HWND hwnd, QString* whyOut)
+bool isScaryWindow(HWND hwnd, QString* whyOut, QHash<quint32, QString>& pidCache)
 {
     if (!hwnd) return false;
 
@@ -68,6 +68,14 @@ bool isScaryWindow(HWND hwnd, QString* whyOut)
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     if (pid == 0) return false;
+    // process-name verdicts are stable for the life of a pid, so ask
+    // the cache before opening any handles
+    if (auto it = pidCache.constFind(pid); it != pidCache.constEnd()) {
+        if (it->isEmpty()) return false;
+        if (whyOut) *whyOut = *it;
+        return true;
+    }
+    if (pidCache.size() > 128) pidCache.clear();
     HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) return false;
     wchar_t path[MAX_PATH] = {};
@@ -99,6 +107,7 @@ bool isScaryWindow(HWND hwnd, QString* whyOut)
             if (whyOut) *whyOut = name;
             isScary = true;
         }
+        pidCache.insert(pid, isScary ? name : QString());
     }
     CloseHandle(h);
     return isScary;
@@ -447,18 +456,27 @@ void CreechrApp::onTick()
     // requestFlee() which Idle/Walk pick up at the top of their tick
     // and convert to a transition into FlungState.
 #ifdef _WIN32
-    if (m_creechr && (now - m_lastScareMs) > 6000) {
+    // scan at most every 1500ms. m_lastScareMs is the POST-scare
+    // cooldown; it used to gate the scan itself, which meant "scan
+    // every 16ms tick until something scary finally shows up". that
+    // was on the order of a thousand OpenProcess calls per second to
+    // conclude, a thousand times, that the desktop is fine. the
+    // distance check also runs before any process query now, since
+    // rects are already cached and fear has a 350px radius anyway.
+    if (m_creechr && (now - m_lastScaryScanMs) >= 1500
+        && (now - m_lastScareMs) > 6000) {
+        m_lastScaryScanMs = now;
         const QString stateName = m_creechr->stateMachine().currentName();
         const bool fleeable = (stateName == QLatin1String("idle")
                              || stateName == QLatin1String("walk"));
         if (fleeable) {
             for (int i = 0; i < g_cachedWorld.windowHwnds.size(); ++i) {
-                HWND hwnd = static_cast<HWND>(g_cachedWorld.windowHwnds[i]);
-                QString why;
-                if (!isScaryWindow(hwnd, &why)) continue;
                 const QRect& r = g_cachedWorld.windowRects[i];
                 const int dx = r.center().x() - static_cast<int>(m_creechr->position().x());
                 if (qAbs(dx) > 350) continue;
+                HWND hwnd = static_cast<HWND>(g_cachedWorld.windowHwnds[i]);
+                QString why;
+                if (!isScaryWindow(hwnd, &why, m_scaryPidCache)) continue;
                 m_lastScareMs = now;
                 LOG_INFO(QStringLiteral("scared by '%1' (%2 px away)").arg(why).arg(dx));
                 m_creechr->speakRandom({

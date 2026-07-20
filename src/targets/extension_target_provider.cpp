@@ -68,8 +68,16 @@ void ExtensionTargetProvider::requestSteal(const QString& targetId)
     QJsonObject msg;
     msg[QStringLiteral("type")]     = QStringLiteral("steal");
     msg[QStringLiteral("targetId")] = targetId;
+    // route to the tab that produced the scan. without this the
+    // background worker looked up msg.tabId, got undefined, failed
+    // the opt-in check, and silently dropped every steal. yes, the
+    // entire dom leg was decorative until now.
+    if (m_lastScanTabId >= 0) {
+        msg[QStringLiteral("tabId")] = m_lastScanTabId;
+    }
     m_server->send(msg);
-    LOG_INFO(QStringLiteral("ext: steal request -> %1").arg(targetId));
+    LOG_INFO(QStringLiteral("ext: steal request -> %1 (tab %2)")
+        .arg(targetId).arg(m_lastScanTabId));
 }
 
 void ExtensionTargetProvider::requestRestore(const QString& targetId)
@@ -78,8 +86,12 @@ void ExtensionTargetProvider::requestRestore(const QString& targetId)
     QJsonObject msg;
     msg[QStringLiteral("type")]     = QStringLiteral("restore");
     msg[QStringLiteral("targetId")] = targetId;
+    if (m_lastScanTabId >= 0) {
+        msg[QStringLiteral("tabId")] = m_lastScanTabId;
+    }
     m_server->send(msg);
-    LOG_INFO(QStringLiteral("ext: restore request -> %1").arg(targetId));
+    LOG_INFO(QStringLiteral("ext: restore request -> %1 (tab %2)")
+        .arg(targetId).arg(m_lastScanTabId));
 }
 
 void ExtensionTargetProvider::requestScan()
@@ -105,6 +117,7 @@ void ExtensionTargetProvider::onBridgeDisconnected()
     m_autoScanTimer->stop();
     m_cached.clear();
     m_lastScanMs = 0;
+    m_lastScanTabId = -1;
 }
 
 void ExtensionTargetProvider::onAutoScanTimer()
@@ -159,8 +172,9 @@ void ExtensionTargetProvider::onPipeMessage(const QJsonObject& msg)
             }
         }
         m_lastScanMs = QDateTime::currentMSecsSinceEpoch();
-        LOG_INFO(QStringLiteral("ext provider: scan_result, %1 items cached")
-            .arg(m_cached.size()));
+        m_lastScanTabId = msg.value(QStringLiteral("tabId")).toInt(-1);
+        LOG_INFO(QStringLiteral("ext provider: scan_result, %1 items cached (tab %2)")
+            .arg(m_cached.size()).arg(m_lastScanTabId));
     }
     else if (type == QLatin1String("steal_ack")) {
         const QString id = msg.value(QStringLiteral("targetId")).toString();

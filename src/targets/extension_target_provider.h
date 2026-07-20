@@ -84,6 +84,10 @@ private:
     QTimer* m_autoScanTimer = nullptr;
     QVector<DomTarget> m_cached;
     qint64 m_lastScanMs = 0;
+    // the browser tab the cached targets came from. echoed back on
+    // steal/restore so the background worker routes to the right tab
+    // instead of dropping the message on its opt-in check.
+    int m_lastScanTabId = -1;
     QHash<QString, qint64> m_stealAcks;
     QHash<QString, qint64> m_restoreAcks;
 };

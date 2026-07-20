@@ -1213,11 +1213,12 @@ private:
 
 // === heist states ===
 //
-// flow: heist_approach -> heist_carry -> heist_wait -> heist_return -> idle
-//   approach: walk to the target's nearest edge, then capture+hide
-//   carry:    walk to chosen screen corner, then add to hoard
-//   wait:     stand at corner for 30-90s
-//   return:   walk back to original location, then restore
+// happy path: heist_approach -> heist_grab -> heist_carry ->
+//   heist_stash -> heist_wait -> heist_toss -> (item sinks, restore
+//   fires at the bottom edge) -> idle
+// abort path: carry aborts walk back via heist_return, which restores
+//   inline at the origin and drops a trophy. cursor heists skip
+//   approach (grapple reel) and skip return (the glide IS the return).
 //
 // any state along the way that detects user input (msSinceLastInput<300)
 // or hard timeouts will abort and restore. spec §5.1 safety 2.
@@ -1422,7 +1423,12 @@ public:
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         HeistContext* h = c.heist();
-        if (!h) return QStringLiteral("idle");
+        if (!h) {
+            // heist yanked out from under us (tray release fired while
+            // we were mid-reel). dont leave a rope drawn to nowhere.
+            c.clearRappelAnchor();
+            return QStringLiteral("idle");
+        }
 
         if (!m_capturedOk) {
             // capture failed in enter() — abort cleanly
@@ -1477,10 +1483,8 @@ public:
             }
             const double step = qMin(dist, 1100.0 * (deltaMs / 1000.0));
             const QPointF next = QPointF(curNow) + delta * (step / dist);
-            QScreen* primary = QGuiApplication::primaryScreen();
-            const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
-            SetCursorPos(static_cast<int>(next.x() * dpr),
-                         static_cast<int>(next.y() * dpr));
+            const QPoint nativeNext = cr::win32::logicalToNative(next);
+            SetCursorPos(nativeNext.x(), nativeNext.y());
             // rope follows the pointer: the hook is ON the cursor
             c.setRappelAnchor(static_cast<int>(next.x()),
                               static_cast<int>(next.y()));
@@ -1619,22 +1623,18 @@ public:
             c.takeCursorCustody(h->originalFrame.center());
 #ifdef _WIN32
             // SetCursorPos takes PHYSICAL pixels when the process is
-            // dpi aware (we are, per-monitor v2). creechr's position
-            // is in LOGICAL pixels. if you just pass logical coords
-            // the cursor ends up scaled DOWN by the dpr — on a 150%
-            // display the cursor lags behind creechr because it only
-            // moves 2/3 as far. multiply by the primary screen dpr to
-            // convert back to physical before the call.
+            // dpi aware (we are, per-monitor v2); creechr math is
+            // LOGICAL. logicalToNative does the per-screen conversion
+            // (a blanket primary-dpr multiply is only correct on the
+            // primary screen and diverges on mixed-dpi setups).
             int cx = qBound(world.virtualDesktop.left()  + 4,
                             static_cast<int>(pos.x()) + 16,
                             world.virtualDesktop.right() - 4);
             int cy = qBound(world.virtualDesktop.top()   + 4,
                             static_cast<int>(pos.y()) + 16,
                             world.virtualDesktop.bottom() - 4);
-            QScreen* primary = QGuiApplication::primaryScreen();
-            const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
-            SetCursorPos(static_cast<int>(cx * dpr),
-                         static_cast<int>(cy * dpr));
+            const QPoint nativeDrag = cr::win32::logicalToNative(QPointF(cx, cy));
+            SetCursorPos(nativeDrag.x(), nativeDrag.y());
 #endif
         }
 
@@ -1942,11 +1942,11 @@ public:
 
     void enter(Creechr& c, const WorldContext&) override
     {
+        m_elapsedMs = 0;
         if (!c.heist()) return;
         const QPoint orig = c.heist()->originalFrame.topLeft();
         const bool right = orig.x() > c.position().x();
         c.setFacingRight(right);
-        c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
         // still carrying the thing, so still using the carry walk anim
         c.animator().setAnimation(right ? QStringLiteral("carry_right")
                                         : QStringLiteral("carry_left"));
@@ -1956,25 +1956,45 @@ public:
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
-        QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
-        c.setPosition(pos);
+        m_elapsedMs += deltaMs;
 
         const int targetX = h->originalFrame.left();
-        if (qAbs(static_cast<int>(pos.x()) - targetX) <= 6) {
-            // arrived. restore via hoard, then drop a trophy in the
-            // nest as a permanent (per-session) cosmetic marker.
-            if (auto* hoard = c.hoard(); hoard && !h->hoardId.isEmpty()) {
-                hoard->restoreById(h->hoardId);
+        const int dx = targetX - static_cast<int>(c.position().x());
+        // direction is re-derived EVERY tick. a fat dt (laptop resume
+        // hands us up to 500ms) can step clean past the 6px arrival
+        // window, and a set-once velocity then walks him off the
+        // desktop forever with the loot. recomputed direction makes
+        // overshoot self-correct; the time cap covers everything else.
+        const bool arrived = qAbs(dx) <= 6
+            || m_elapsedMs > heist_helpers::kHeistMaxNonStashMs;
+        if (!arrived) {
+            const bool right = dx > 0;
+            if (c.facingRight() != right) {
+                c.setFacingRight(right);
+                c.animator().setAnimation(right ? QStringLiteral("carry_right")
+                                                : QStringLiteral("carry_left"));
             }
-            c.addTrophy(h->carriedPixmap, world.virtualDesktop);
-            // cursor return happens inside clearHeist via cursor
-            // custody. used to be a SetCursorPos here, which meant the
-            // OTHER heist end paths never gave the pointer back.
-            c.clearHeist();
-            return QStringLiteral("idle");
+            c.setVelocity({ right ? 100.0 : -100.0, 0.0 });
+            c.setPosition(c.position() + c.velocity() * (deltaMs / 1000.0));
+            return {};
         }
-        return {};
+
+        // arrived (or gave up trying): give it back RIGHT HERE, in
+        // whatever phase the heist is in. this used to be a
+        // restoreById guarded on hoardId, but heist_return is only
+        // ever entered from the carry abort, which is pre-stash, so
+        // hoardId was ALWAYS empty and the restore never fired: the
+        // hidden window stayed hidden forever while he pocketed a
+        // trophy for the job. inline restore covers every phase.
+        c.restoreHeldLootInline();
+        c.addTrophy(h->carriedPixmap, world.virtualDesktop);
+        // cursor return happens inside clearHeist via cursor custody
+        c.clearHeist();
+        return QStringLiteral("idle");
     }
+
+private:
+    int m_elapsedMs = 0;
 };
 
 // CursorSwing: when the system has been idle long enough that creechr
@@ -2296,6 +2316,40 @@ void Creechr::clearHeist()
     m_heist.reset();
 }
 
+void Creechr::restoreHeldLootInline()
+{
+    if (!m_heist) return;
+    HeistContext& h = *m_heist;
+    if (!h.hoardId.isEmpty()) {
+        // stashed: the hoard owns the restore, fire it
+        if (m_hoard) m_hoard->restoreById(h.hoardId);
+        return;
+    }
+    // pre-stash. window: only hidden once grabbed flipped. put it back
+    // by hand, same moves as the restore lambda stash WOULD have made.
+#ifdef _WIN32
+    if (h.grabbed && h.target.kind == TargetKind::Window) {
+        HWND hwnd = static_cast<HWND>(h.target.hwnd);
+        if (hwnd && IsWindow(hwnd)) {
+            SetWindowPos(hwnd, HWND_TOP,
+                         h.originalFrame.left(), h.originalFrame.top(),
+                         h.originalFrame.width(), h.originalFrame.height(),
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            LOG_INFO(QStringLiteral("restore inline: un-hid %1 pre-stash")
+                .arg(h.target.label));
+        }
+    }
+#endif
+    // dom: the element leaves the page at requestSteal time, BEFORE
+    // grabbed flips (the ack can take seconds). so restore whenever a
+    // dom heist got as far as having an id at all; the content script
+    // no-ops ids it never stole.
+    if (h.target.kind == TargetKind::DomElement && m_ext
+        && !h.target.opaqueId.isEmpty()) {
+        m_ext->requestRestore(h.target.opaqueId);
+    }
+}
+
 void Creechr::giveBackLootNow()
 {
     if (!m_heist) {
@@ -2303,41 +2357,21 @@ void Creechr::giveBackLootNow()
         returnCursorIfHeld();
         return;
     }
-    HeistContext& h = *m_heist;
-    if (h.grabbed) {
-        if (!h.hoardId.isEmpty()) {
-            // stashed: the hoard owns the restore, fire it
-            if (m_hoard) m_hoard->restoreById(h.hoardId);
-        } else {
-            // carry phase: source is hidden but no hoard entry exists
-            // yet. put it back by hand, same moves as the restore
-            // lambda that stash WOULD have registered.
-#ifdef _WIN32
-            if (h.target.kind == TargetKind::Window) {
-                HWND hwnd = static_cast<HWND>(h.target.hwnd);
-                if (hwnd && IsWindow(hwnd)) {
-                    SetWindowPos(hwnd, HWND_TOP,
-                                 h.originalFrame.left(), h.originalFrame.top(),
-                                 h.originalFrame.width(), h.originalFrame.height(),
-                                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
-                    LOG_INFO(QStringLiteral("giveBackLootNow: un-hid %1 mid-carry")
-                        .arg(h.target.label));
-                }
-            }
-#endif
-            if (h.target.kind == TargetKind::DomElement && m_ext
-                && !h.target.opaqueId.isEmpty()) {
-                m_ext->requestRestore(h.target.opaqueId);
-            }
-        }
-    }
+    restoreHeldLootInline();
     clearHeist();
 }
 
 void Creechr::takeCursorCustody(QPoint homeLogical)
 {
+    // if we still owe the pointer a return (custody held, or a return
+    // glide is mid-flight), the ORIGINAL home stands. overwriting it
+    // with a mid-glide position would launder the debt: the pointer
+    // would "return" to wherever we ourselves dragged it, and across
+    // back-to-back heists it ratchets into a corner.
+    if (!m_cursorCustody && !m_cursorGlide.active) {
+        m_cursorHome = homeLogical;
+    }
     m_cursorCustody = true;
-    m_cursorHome = homeLogical;
     // taking custody cancels any in-flight return: the pointer is his
     // again, no point finishing the previous reel
     m_cursorGlide.active = false;
@@ -2391,10 +2425,8 @@ void Creechr::tickCursorGlide(int deltaMs)
     // ease-out: fast yank off the line, gentle landing
     const double e = 1.0 - (1.0 - t) * (1.0 - t);
     const QPointF p = m_cursorGlide.from + (m_cursorGlide.to - m_cursorGlide.from) * e;
-    QScreen* primary = QGuiApplication::primaryScreen();
-    const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
-    SetCursorPos(static_cast<int>(p.x() * dpr),
-                 static_cast<int>(p.y() * dpr));
+    const QPoint native = cr::win32::logicalToNative(p);
+    SetCursorPos(native.x(), native.y());
     if (t >= 1.0) m_cursorGlide.active = false;
 #else
     m_cursorGlide.active = false;

@@ -135,11 +135,25 @@ public:
     // rappel anchor: the screen-space point where creechr's line is
     // currently attached. set by ShootRappel, cleared when rappel
     // states finish. overlay reads this to draw the visible line.
+    // active-ness is an explicit bool, NOT a negative-coordinate
+    // sentinel: monitors left of or above the primary have negative
+    // virtual-desktop coords, and the old >= 0 check silently ate the
+    // rope on those screens.
     int rappelAnchorX() const { return m_rappelAnchorX; }
     int rappelAnchorY() const { return m_rappelAnchorY; }
-    bool rappelActive() const { return m_rappelAnchorX >= 0 && m_rappelAnchorY >= 0; }
-    void setRappelAnchor(int x, int y) { m_rappelAnchorX = x; m_rappelAnchorY = y; }
-    void clearRappelAnchor() { m_rappelAnchorX = -1; m_rappelAnchorY = -1; }
+    bool rappelActive() const { return m_rappelAnchorSet; }
+    void setRappelAnchor(int x, int y)
+    {
+        m_rappelAnchorX = x;
+        m_rappelAnchorY = y;
+        m_rappelAnchorSet = true;
+    }
+    void clearRappelAnchor()
+    {
+        m_rappelAnchorX = -1;
+        m_rappelAnchorY = -1;
+        m_rappelAnchorSet = false;
+    }
 
     // speech: a small one-line text bubble drawn near creechr's head.
     // states call speak() to set one. it auto-clears at expiry. the
@@ -202,6 +216,12 @@ public:
     // anything that startles him into dropping the goods.
     void giveBackLootNow();
 
+    // the restore half of giveBackLootNow without the clearHeist.
+    // states that want to do their own ceremony around the give-back
+    // (heist_return drops a trophy first) call this then clean up
+    // themselves. safe to call in any heist phase, including no heist.
+    void restoreHeldLootInline();
+
     // wantsFlee: set externally (by CreechrApp's scary-admin detector)
     // when creechr should drop whatever he's doing and run away. read
     // by Idle/Walk states at the top of tick(). they pre-set velocity
@@ -240,6 +260,7 @@ private:
     void* m_gnawHwnd = nullptr;
     int m_rappelAnchorX = -1;
     int m_rappelAnchorY = -1;
+    bool m_rappelAnchorSet = false;
     QString m_speechText;
     qint64 m_speechExpiryMs = 0;
     QVector<Particle>     m_particles;

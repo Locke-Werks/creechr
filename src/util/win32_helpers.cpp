@@ -1,5 +1,8 @@
 #include "util/win32_helpers.h"
 
+#include <QGuiApplication>
+#include <QScreen>
+
 #ifdef _WIN32
 #  include <windows.h>
 #endif
@@ -32,6 +35,21 @@ bool anyMouseButtonDown()
 #else
     return false;
 #endif
+}
+
+QPoint logicalToNative(QPointF logicalPos)
+{
+    // per-screen scale around that screen's own origin. matches qt
+    // 6.8's qhighdpiscaling model (fromNativeScreenGeometry preserves
+    // the native top-left and scales only the size). screenAt can
+    // return null for a point in the dead zone between monitors of
+    // different heights; the primary is the least-wrong fallback.
+    QScreen* s = QGuiApplication::screenAt(logicalPos.toPoint());
+    if (!s) s = QGuiApplication::primaryScreen();
+    if (!s) return logicalPos.toPoint();
+    const QPointF origin = s->geometry().topLeft();
+    const QPointF native = origin + (logicalPos - origin) * s->devicePixelRatio();
+    return QPoint(qRound(native.x()), qRound(native.y()));
 }
 
 } // namespace cr::win32

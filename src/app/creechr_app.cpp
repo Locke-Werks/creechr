@@ -492,7 +492,12 @@ void CreechrApp::onTick()
         ? (sinceLastAttempt > 2000)
         : (meanMs > 0
            && static_cast<int>(QRandomGenerator::global()->bounded(meanMs)) < dt);
+    // the cursorGlideActive gate: no new crimes while the pointer is
+    // still being reeled home from the last one. without it a cursor
+    // heist can start mid-glide, sample the half-returned pointer as
+    // its "origin", and the true origin is lost for good.
     if (m_creechr && !m_creechr->heist()
+        && !m_creechr->cursorGlideActive()
         && inputGateOk
         && sinceLastAttempt > m_settings.heistCooldownMs()
         && randomGateOk) {

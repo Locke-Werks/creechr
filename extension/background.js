@@ -13,6 +13,11 @@
 
 let port = null;
 let optedInTabs = new Set();
+// the tab that served the most recent scan. steal/restore fall back
+// to it when the native side doesn't say which tab it means (older
+// creechr builds never sent tabId at all, and every steal got dropped
+// by the opt-in check on undefined. the whole dom feature. dropped.)
+let lastScanTabId = null;
 
 function ensurePort() {
     if (port) return port;
@@ -41,13 +46,14 @@ async function handleNativeMessage(msg) {
             sendNative({ type: 'scan_result', tabId, items: [] });
             return;
         }
+        lastScanTabId = tabId;
         const result = await chrome.scripting.executeScript({
             target: { tabId },
             func: contentScanTargets,
         });
         sendNative({ type: 'scan_result', tabId, items: result?.[0]?.result ?? [] });
     } else if (msg.type === 'steal') {
-        const tabId = msg.tabId;
+        const tabId = msg.tabId ?? lastScanTabId;
         if (!optedInTabs.has(tabId)) return;
         await chrome.scripting.executeScript({
             target: { tabId },
@@ -56,7 +62,7 @@ async function handleNativeMessage(msg) {
         });
         sendNative({ type: 'steal_ack', tabId, targetId: msg.targetId });
     } else if (msg.type === 'restore') {
-        const tabId = msg.tabId;
+        const tabId = msg.tabId ?? lastScanTabId;
         if (!optedInTabs.has(tabId)) return;
         await chrome.scripting.executeScript({
             target: { tabId },
@@ -159,6 +165,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // clean up when a tab closes
 chrome.tabs.onRemoved.addListener((tabId) => {
     optedInTabs.delete(tabId);
+    if (lastScanTabId === tabId) lastScanTabId = null;
 });
 
 // keep the worker semi-alive by doing a no-op every minute. mv3 service

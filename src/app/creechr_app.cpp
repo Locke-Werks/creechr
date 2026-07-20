@@ -472,6 +472,19 @@ void CreechrApp::onTick()
         (m_settings.calmWhenInCall && m_busy && m_busy->busy())
         || (m_fullscreen && m_fullscreen->userRequestedQuiet())
         || m_fullscreenAsBusy;
+    // announce the mode switch. a silently polite creature reads as a
+    // broken creature; a "shh" bubble reads as a bit.
+    if (g_cachedWorld.userBusy != m_lastUserBusy && m_creechr) {
+        m_lastUserBusy = g_cachedWorld.userBusy;
+        m_creechr->speakRandom(g_cachedWorld.userBusy
+            ? QStringList{ QStringLiteral("shh. youre on a call"),
+                           QStringLiteral("i see the meeting. i will behave"),
+                           QStringLiteral("professional mode. engaged.") }
+            : QStringList{ QStringLiteral("meeting over. crime resumes"),
+                           QStringLiteral("finally. back to work"),
+                           QStringLiteral("they gone? good.") },
+            2600);
+    }
     // cheap stuff every tick
     g_cachedWorld.cursorPos = QCursor::pos();
     g_cachedWorld.msSinceLastInput = cr::win32::millisSinceLastInput();

@@ -64,6 +64,16 @@ TrayIcon::TrayIcon(CreechrApp* app, const cr::SpriteAtlas* atlas)
             m_app->extensionPipeOk(),
             QStringLiteral("pipe server didnt start; browser theft is off the table"));
 
+    // politeness: he goes quiet when your mic or camera is live.
+    // uncheck if your mic is always hot and you want crimes anyway.
+    QAction* polite = m_menu->addAction(QStringLiteral("polite during calls"));
+    polite->setCheckable(true);
+    polite->setChecked(m_app->settings().calmWhenInCall);
+    connect(polite, &QAction::toggled, this, [this](bool on) {
+        m_app->settings().calmWhenInCall = on;
+        m_app->saveSettings();
+    });
+
     m_menu->addSeparator();
     m_fireHeistAction = m_menu->addAction(QStringLiteral("fire a heist now"));
     m_releaseAction = m_menu->addAction(QStringLiteral("release everything he's stolen"));

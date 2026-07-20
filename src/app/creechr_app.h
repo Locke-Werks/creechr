@@ -86,6 +86,7 @@ private:
     // fullscreen detected but the user opted out of hiding: treat as
     // "present but polite" instead of "gone"
     bool m_fullscreenAsBusy = false;
+    bool m_lastUserBusy = false;
     std::unique_ptr<cr::WindowTargetProvider> m_winTargets;
     std::unique_ptr<cr::CursorTargetProvider> m_curTargets;
     std::unique_ptr<cr::UiaTargetProvider> m_uiaTargets;

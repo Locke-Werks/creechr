@@ -19,6 +19,7 @@ class Creechr;
 class SpriteAtlas;
 class WindowEnumerator;
 class FullscreenDetector;
+class BusyDetector;
 class WindowTargetProvider;
 class CursorTargetProvider;
 class UiaTargetProvider;
@@ -80,6 +81,11 @@ private:
     std::unique_ptr<cr::Creechr> m_creechr;
     std::unique_ptr<cr::WindowEnumerator> m_windows;
     std::unique_ptr<cr::FullscreenDetector> m_fullscreen;
+    std::unique_ptr<cr::BusyDetector> m_busy;
+    qint64 m_lastBusyPollMs = 0;
+    // fullscreen detected but the user opted out of hiding: treat as
+    // "present but polite" instead of "gone"
+    bool m_fullscreenAsBusy = false;
     std::unique_ptr<cr::WindowTargetProvider> m_winTargets;
     std::unique_ptr<cr::CursorTargetProvider> m_curTargets;
     std::unique_ptr<cr::UiaTargetProvider> m_uiaTargets;

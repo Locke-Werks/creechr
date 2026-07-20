@@ -105,10 +105,11 @@ public:
         }
         // idle-timeout swing: user has stepped away. only trigger when
         // we're NOT in the middle of a micro-behavior anim, so the
-        // current scratch/yawn/blink finishes first. state machine
-        // already ensures we got here by walk finishing naturally, so
-        // this is the correct "finish what youre doing" gate.
-        if (world.msSinceLastInput > 30000 && !m_inBehavior) {
+        // current scratch/yawn/blink finishes first. suppressed while
+        // the user is busy: "idle at the machine" during a call means
+        // they're presenting, and swinging from their pointer on a
+        // shared screen is a firing offense.
+        if (world.msSinceLastInput > 30000 && !m_inBehavior && !world.userBusy) {
             return QStringLiteral("cursor_swing");
         }
 
@@ -125,7 +126,7 @@ public:
         } else {
             m_subMs += deltaMs;
             if (m_subMs >= m_subThreshold) {
-                fireMicroBehavior(c);
+                fireMicroBehavior(c, world.userBusy);
                 if (m_pouncing) {
                     m_pouncing = false;
                     return QStringLiteral("flung");
@@ -146,14 +147,16 @@ private:
         return 1500 + QRandomGenerator::global()->bounded(2000);
     }
 
-    void fireMicroBehavior(Creechr& c)
+    void fireMicroBehavior(Creechr& c, bool userBusy)
     {
         // 1-in-20 chance: POUNCE at the cursor like a cat. compute the
         // direction from creechr to cursor, set velocity in that
         // direction with an upward arc, transition to flung. flung's
         // physics handle the rest — gravity, bounce, settle. dramatic
         // and entirely new every time because the cursor moves.
-        if (QRandomGenerator::global()->bounded(20) == 0) {
+        // suppressed mid-call: lunging at the presenters pointer is
+        // not the vibe.
+        if (!userBusy && QRandomGenerator::global()->bounded(20) == 0) {
             const QPoint cursor = QCursor::pos();
             const double dx = cursor.x() - (c.position().x() + 24);
             const double dy = cursor.y() - (c.position().y() + 24);

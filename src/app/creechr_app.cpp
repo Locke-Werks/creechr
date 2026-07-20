@@ -13,6 +13,7 @@
 #include "targets/window_target_provider.h"
 #include "util/app_snark.h"
 #include "util/win32_helpers.h"
+#include "world/busy_detector.h"
 #include "world/fullscreen_detector.h"
 #include "world/window_enumerator.h"
 
@@ -181,6 +182,10 @@ void CreechrApp::start()
 #endif
 
     m_fullscreen = std::make_unique<cr::FullscreenDetector>();
+#ifdef _WIN32
+    m_fullscreen->setSelfHwnd(reinterpret_cast<void*>(m_overlay->winId()));
+#endif
+    m_busy = std::make_unique<cr::BusyDetector>();
     m_winTargets = std::make_unique<cr::WindowTargetProvider>(m_windows.get());
     m_curTargets = std::make_unique<cr::CursorTargetProvider>();
     m_uiaTargets = std::make_unique<cr::UiaTargetProvider>();
@@ -449,8 +454,24 @@ void CreechrApp::onTick()
             }
             g_prevWindowPositions = std::move(nextPrev);
         }
-        if (m_fullscreen) g_cachedWorld.fullscreenActive = m_fullscreen->isFullscreenActive();
+        if (m_fullscreen) {
+            const bool detected = m_fullscreen->isFullscreenActive();
+            // hideOnFullscreen off means "stay visible during games,
+            // just dont commit crimes" — fullscreen then routes into
+            // the userBusy lane instead of the hide/freeze lane
+            g_cachedWorld.fullscreenActive = detected && m_settings.hideOnFullscreen;
+            m_fullscreenAsBusy = detected && !m_settings.hideOnFullscreen;
+        }
     }
+    // mic/camera poll is registry enumeration; every 5s is plenty
+    if (m_busy && now - m_lastBusyPollMs >= 5000) {
+        m_lastBusyPollMs = now;
+        m_busy->refresh();
+    }
+    g_cachedWorld.userBusy =
+        (m_settings.calmWhenInCall && m_busy && m_busy->busy())
+        || (m_fullscreen && m_fullscreen->userRequestedQuiet())
+        || m_fullscreenAsBusy;
     // cheap stuff every tick
     g_cachedWorld.cursorPos = QCursor::pos();
     g_cachedWorld.msSinceLastInput = cr::win32::millisSinceLastInput();
@@ -486,6 +507,9 @@ void CreechrApp::onTick()
     static const QByteArray kKindPin = qgetenv("CREECHR_HEIST_KIND").toLower();
     const int meanMs = m_settings.heistMeanIntervalMs();
     const qint64 sinceLastAttempt = now - m_lastHeistAttemptMs;
+    // userBusy covers "in a call" (mic/camera held), QUNS_BUSY dnd,
+    // and visible-during-fullscreen mode. no crimes while presenting.
+    const bool politeGateOk = kForceHeist || !g_cachedWorld.userBusy;
     const bool inputGateOk = kForceHeist
         || g_cachedWorld.msSinceLastInput >= m_settings.inputIdleGateMs();
     const bool randomGateOk = kForceHeist
@@ -498,6 +522,7 @@ void CreechrApp::onTick()
     // its "origin", and the true origin is lost for good.
     if (m_creechr && !m_creechr->heist()
         && !m_creechr->cursorGlideActive()
+        && politeGateOk
         && inputGateOk
         && sinceLastAttempt > m_settings.heistCooldownMs()
         && randomGateOk) {
@@ -565,7 +590,8 @@ void CreechrApp::onTick()
     // conclude, a thousand times, that the desktop is fine. the
     // distance check also runs before any process query now, since
     // rects are already cached and fear has a 350px radius anyway.
-    if (m_creechr && (now - m_lastScaryScanMs) >= 1500
+    if (m_creechr && !g_cachedWorld.userBusy
+        && (now - m_lastScaryScanMs) >= 1500
         && (now - m_lastScareMs) > 6000) {
         m_lastScaryScanMs = now;
         const QString stateName = m_creechr->stateMachine().currentName();

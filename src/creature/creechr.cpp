@@ -103,14 +103,21 @@ public:
         if (c.heist() && !c.heist()->grabbed) {
             return QStringLiteral("heist_approach");
         }
-        // idle-timeout swing: user has stepped away. only trigger when
-        // we're NOT in the middle of a micro-behavior anim, so the
-        // current scratch/yawn/blink finishes first. suppressed while
-        // the user is busy: "idle at the machine" during a call means
-        // they're presenting, and swinging from their pointer on a
-        // shared screen is a firing offense.
-        if (world.msSinceLastInput > 30000 && !m_inBehavior && !world.userBusy) {
-            return QStringLiteral("cursor_swing");
+        // idle tiers: 30s of quiet earns a cursor swing, 3 minutes
+        // earns a nap. sleep was effectively unreachable after the
+        // swing landed at 30s (the poor state sat registered with no
+        // route in); tiering gives the long-idle case back to it.
+        // both suppressed while the user is busy: "idle at the
+        // machine" during a call means they're presenting, and
+        // swinging from their pointer on a shared screen is a firing
+        // offense.
+        if (!m_inBehavior && !world.userBusy) {
+            if (world.msSinceLastInput > 180000) {
+                return QStringLiteral("sleep");
+            }
+            if (world.msSinceLastInput > 30000) {
+                return QStringLiteral("cursor_swing");
+            }
         }
 
         // personality micro-behaviors. if we're playing a one-shot anim,
@@ -473,8 +480,10 @@ public:
     QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         if (world.msSinceLastInput > 30000) {
+            // long-idle routing lives in IdleState's tier logic; this
+            // just abandons the wall walk and lets idle decide
             c.clearClimbTarget();
-            return QStringLiteral("sleep");
+            return QStringLiteral("idle");
         }
         const double dt = deltaMs / 1000.0;
         QPointF pos = c.position() + c.velocity() * dt;
@@ -2028,6 +2037,8 @@ public:
         m_kickCooldown = 0;
         m_approachShotMs = 0;
         m_targetL = 120.0;
+        m_totalSwingMs = 0;
+        m_tiredAtMs = 90000 + QRandomGenerator::global()->bounded(30000);
 
         // compute current distance from creechrs hand to the cursor
         const QPointF hand = rappel::handPoint(c);
@@ -2083,6 +2094,20 @@ public:
         const int dxCursor = cursor.x() - m_anchorStart.x();
         const int dyCursor = cursor.y() - m_anchorStart.y();
         if (dxCursor * dxCursor + dyCursor * dyCursor > 8 * 8) {
+            releaseRope(c);
+            return QStringLiteral("flung");
+        }
+        // arms get tired. after a minute and a half (ish) of swinging
+        // he lets go on his own; idle's tier logic then escalates a
+        // long-idle desk to an actual nap instead of infinite cardio.
+        m_totalSwingMs += deltaMs;
+        if (m_totalSwingMs > m_tiredAtMs) {
+            c.speakRandom({
+                QStringLiteral("arms tired"),
+                QStringLiteral("ok thats enough"),
+                QStringLiteral("cardio complete"),
+                QStringLiteral("whew"),
+            }, 1800);
             releaseRope(c);
             return QStringLiteral("flung");
         }
@@ -2204,6 +2229,8 @@ private:
     QPoint m_anchorStart;
     int m_kickCooldown = 0;
     int m_approachShotMs = 0;
+    int m_totalSwingMs = 0;
+    int m_tiredAtMs = 90000;
 };
 
 // nap. just sit there with eyes closed. periodically emits a small

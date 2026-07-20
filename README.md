@@ -66,8 +66,9 @@ but it'll work.
 ## running him
 
 double click `creechr.exe`. that's it. there's no installer. there's no
-splash screen. there's a tray icon shaped like a small angry square — that's
-him. right click for pause / quit.
+splash screen. there's a tray icon with his actual face on it. right click
+for the whole menu: pause, mischief level, what he's allowed to steal,
+start-with-windows, quit.
 
 if he gets stuck on the taskbar or starts climbing something he shouldn't,
 right click the tray icon and pick quit. or kill him from task manager if
@@ -413,6 +414,87 @@ uses primary-screen DPR (approximate on mixed-dpi multimon), the
 extension id editing dance is unavoidable for unpacked dev
 extensions (chromes fault).
 
+### v1.1 — he learned manners (and stopped eating cpu)
+
+the "leave it running all day" release. no new kinds of theft, lots
+of new respect for the person being stolen from.
+
+politeness:
+- caught red-handed: any input while he's guarding a stash restores
+  the stolen thing INSTANTLY and he bolts with an excuse ("you saw
+  nothing"). loot already sinking drops like a rock when you're back.
+- cursor custody: every path that moves your pointer owes it back
+  now, and the debt survives aborts, tosses, quits, and back-to-back
+  heists. returns are a reeled glide, not a teleport, cancelled the
+  instant you touch the mouse yourself.
+- cursor heists open with a grappling hook: he plants his feet, fires
+  the line at your pointer, and reels it down into his hands. nothing
+  pops from one place to another anymore.
+- he can tell you're in a call (mic/camera held by any app, read from
+  the consent store; QUNS_BUSY dnd honored too, finally) and goes
+  quiet: no heists, no pounces, no swinging from the presenter's
+  cursor. announces the mode switch so it doesn't read as a crash.
+  stale consent-store ghosts from uninstalled apps are filtered.
+- borderless-windowed fullscreen (i.e. every modern game, fullscreen
+  youtube) finally detected: foreground window, no WS_CAPTION, covers
+  its monitor. the caption bit is what keeps maximized normal apps
+  from false-positiving, aka the trap the old comment warned about.
+
+settings (yes, really):
+- creechr.ini in %APPDATA%\creechr — a file you can read, not the
+  registry. mischief dial (calm / normal / gremlin), per-kind steal
+  consent (windows / cursor / taskbar / browser), polite-during-calls,
+  hide-on-fullscreen, adaptive tick. the tray grew submenus for all of
+  it plus start-with-windows (HKCU Run key; the registry is the truth
+  for that checkbox, not the ini). calm mode = zero theft; climbing
+  and swinging stay because they take nothing. exactly five gates
+  scale with mischief, everything else stays hardcoded character.
+- env vars still beat settings. CREECHR_HEIST_NOW means you meant it.
+
+crash safety:
+- hoard.json v2 stores enough identity (hwnd value + class + pid +
+  title + frame) to restore hidden windows on the NEXT boot after a
+  hard crash, with a class+exact-title hunt through invisible
+  top-levels when the hwnd went stale. tested by forging crashes.
+- an unhandled-exception filter shows every held window on the way
+  down, including the mid-grab window that isn't in the hoard yet.
+  no heap, no qt, no locks in the filter; WER still gets the corpse.
+  taskkill /f bypasses it by design — that's the boot restore's job.
+- carry-abort walk-backs actually restore now. the old abort path
+  "restored" via a hoard id that is always empty on that path, so the
+  window stayed hidden forever while he pocketed a trophy for the
+  job. found by adversarial review. inline restore, any phase.
+
+performance:
+- the scary-admin scan was calling OpenProcess on every window every
+  16ms tick (the throttle was keyed on the last SCARE, not the last
+  scan). now: 1.5s cadence, distance check first, pid verdict cache.
+- dirty-region repaints instead of invalidating three monitors of
+  layered window at 60Hz, plus an adaptive tick (60 to 30 when calm,
+  5 during fullscreen). measured on the dev box: 13.5% of a core
+  down to 2.5%, and that was with him actively walking.
+- uia scans moved to a worker thread with its own MTA com init, as
+  the spec demanded all along. cold snapshot = that roll falls
+  through to a cursor heist and the next one hits warm data.
+
+multi-monitor honesty:
+- SetCursorPos conversion is per-screen now (scale around the
+  containing screen's origin, matching qt's actual mapping), so
+  cursor reels no longer diverge on mixed-dpi setups. the rope also
+  renders on monitors left of or above the primary — the old anchor
+  sentinel treated negative coordinates as "no anchor".
+
+dom heists are no longer decorative:
+- the extension's background worker was dropping every steal because
+  the native side never sent a tabId and the opt-in check ate
+  undefined. the scan's tab now rides along on steal/restore from
+  both sides. still opt-in per tab, still lightly tested e2e, but
+  the wiring exists now.
+
+misc: sleep is reachable again (30s idle = cursor swing, 3min = nap,
+his arms tire after ~90s of swinging), dead window_geometry files
+deleted, dom-ack timer resets between heists.
+
 ## dev environment variables
 
 knobs you can set in the environment to change creechr's behavior
@@ -422,7 +504,10 @@ without rebuilding. most are development aids.
 |-----|--------|
 | `CREECHR_LOG_LEVEL` | `trace` / `debug` / `info` / `warn` / `error`. default `info`. |
 | `CREECHR_TEST_EXIT_MS` | auto-quit after N ms. for scripted test runs. |
-| `CREECHR_HEIST_NOW=1` | fire a heist every ~2s, ignore the random gate and input-idle gate |
+| `CREECHR_TEST_CRASH_MS` | crash on purpose after N ms. exercises the crash guard. |
+| `CREECHR_HEIST_NOW=1` | fire a heist every ~2s, ignore the random gate, input-idle gate, calm mode, and polite mode |
+| `CREECHR_HEIST_KIND` | pin the heist roll: `window` / `uia` / `dom` / `cursor`. beats the per-kind settings toggles. |
+| `CREECHR_FULL_REPAINT=1` | disable dirty-region updates, invalidate everything every frame like v1.0 did |
 | `CREECHR_GNAW_NOW=1` | every climb decision becomes a gnaw attempt |
 | `CREECHR_RAPPEL_NOW=1` | every climb decision becomes a rappel attempt |
 | `CREECHR_CHAOS=1` | ~30% of window heists skip the carry-pixmap shrink, restoring the legendary bug where creechr carries an entire 800px window across the desktop |
@@ -447,8 +532,8 @@ without rebuilding. most are development aids.
 - **DOM heist coordinate math** (extension content script) still
   uses the page's devicePixelRatio divided by the primary screen
   dpr. fine on single-monitor 100% boxes, approximate everywhere
-  else. native win32 sources got the per-monitor fix earlier but
-  the extension side still needs the same treatment. v1.1.
+  else. the native win32 sources are all per-monitor correct now;
+  the extension side is the last holdout.
 - **right click menus from other apps** sometimes draw on top of
   him. nothing we can do about that without raising our z-order
   above normal top-level windows, which would make creechr steal
@@ -456,13 +541,14 @@ without rebuilding. most are development aids.
 - **heist orchestrator picks at random**. no preference for things
   that look fun. you might watch him steal the same notepad window
   three times in a row. the rng is working as designed.
-- **mixed-dpi multi-monitor is not fully tested.** the per-monitor
-  dpi fix covers the native side; multi-monitor with different
-  scales has not been properly verified. single-monitor users at
-  any scale should be fine.
-- **chrome extension verification is punted to v1.1.** see the v1.0
-  section for the install dance and known gaps. structurally
-  complete, not e2e verified by the author.
+- **mixed-dpi multi-monitor is correct on paper, lightly tested on
+  hardware.** the v1.1 per-screen SetCursorPos conversion matches
+  qt's documented mapping and survived adversarial review, but the
+  dev box is single-scale. if your pointer does anything weird on a
+  150%-plus-100% setup, logs please.
+- **chrome extension e2e is still thin.** the v1.1 tabId fix makes
+  the steal/restore wiring real, but the author has not run the full
+  browser dance end to end recently. structurally complete.
 
 ## license
 

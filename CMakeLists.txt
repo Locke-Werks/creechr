@@ -44,8 +44,6 @@ add_executable(creechr WIN32
     src/creature/world_context.h
     src/world/window_enumerator.h
     src/world/window_enumerator.cpp
-    src/world/window_geometry.h
-    src/world/window_geometry.cpp
     src/world/fullscreen_detector.h
     src/world/fullscreen_detector.cpp
     src/world/busy_detector.h

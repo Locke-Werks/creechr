@@ -228,7 +228,10 @@ void Hoard::attemptOrphanRestore()
             continue;
         }
         if (e.kind != HoardKind::Window) {
-            continue; // cursor/uia thefts never modified anything
+            // cursor/uia thefts never modified anything persistent
+            LOG_INFO(QStringLiteral("hoard: orphan '%1' needs no restore, dropping")
+                .arg(e.label));
+            continue;
         }
 
         HWND h = e.hwnd;

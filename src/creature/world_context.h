@@ -36,6 +36,17 @@ struct WorldContext {
     // is the user in a fullscreen game / presentation? if true the
     // overlay should hide and the creature should just freeze.
     bool fullscreenActive = false;
+
+    // is the user probably in a call (mic/camera held by some app)?
+    // filled by the busy detector; states use it to skip the showier
+    // antics while somebody is presenting their screen.
+    bool userBusy = false;
+
+    // settings-scaled knobs delivered to states without the states
+    // ever learning that a Settings type exists. filled by CreechrApp
+    // from the live settings every tick.
+    int stashWaitMinMs = 6000;
+    int stashWaitRangeMs = 10000;
 };
 
 } // namespace cr

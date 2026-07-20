@@ -1656,7 +1656,7 @@ class HeistStashState : public State
 public:
     QString name() const override { return QStringLiteral("heist_stash"); }
 
-    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext&) override
+    QString tick(int /*deltaMs*/, Creechr& c, const WorldContext& world) override
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
@@ -1667,11 +1667,13 @@ public:
         if (h->target.kind == TargetKind::Cursor) {
             h->returnAtMs = QDateTime::currentMSecsSinceEpoch();
         } else {
-            // boredom timer: creechr guards his stash for 6-16 seconds
-            // of gnawing and gloating before he gets bored and tosses
-            // it. previous 30-90s felt more like abduction than a gag.
+            // boredom timer: creechr guards his stash before he gets
+            // bored and tosses it. window comes from settings via the
+            // world context (gremlin mode shortens it; the caught-red-
+            // handed check bounds the damage either way).
             h->returnAtMs = QDateTime::currentMSecsSinceEpoch()
-                + 6000 + QRandomGenerator::global()->bounded(10000);
+                + world.stashWaitMinMs
+                + QRandomGenerator::global()->bounded(qMax(1, world.stashWaitRangeMs));
         }
 
         // register in hoard so the quit handler can restore us

@@ -27,6 +27,8 @@ add_executable(creechr WIN32
     src/main.cpp
     src/app/creechr_app.h
     src/app/creechr_app.cpp
+    src/app/settings.h
+    src/app/settings.cpp
     src/app/tray_icon.h
     src/app/tray_icon.cpp
     src/render/overlay_window.h

@@ -17,9 +17,12 @@
 #include "world/window_enumerator.h"
 
 #include <QDesktopServices>
+#include <QDir>
 #include <QRandomGenerator>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QVarLengthArray>
 
 #ifdef _WIN32
 #  include <psapi.h>
@@ -148,6 +151,8 @@ void CreechrApp::start()
     else if (lvl == "error") cr::setLogLevel(cr::LogLevel::Error);
     LOG_INFO(QStringLiteral("CreechrApp::start"));
 
+    m_settings.load();
+
     m_atlas = std::make_unique<cr::SpriteAtlas>();
     m_atlas->makePlaceholder();
     // optional sprite override via env. if CREECHR_SPRITE points at a
@@ -181,7 +186,8 @@ void CreechrApp::start()
     m_uiaTargets = std::make_unique<cr::UiaTargetProvider>();
 
     m_extPipe = std::make_unique<cr::ExtensionPipeServer>(this);
-    if (!m_extPipe->start()) {
+    m_extPipeOk = m_extPipe->start();
+    if (!m_extPipeOk) {
         LOG_WARN(QStringLiteral("extension pipe server failed to start, "
                                 "browser theft will be unavailable"));
     }
@@ -213,7 +219,7 @@ void CreechrApp::start()
     bootstrapWorld.cursorPos = QCursor::pos();
     m_creechr->initialize(bootstrapWorld);
 
-    m_tray = std::make_unique<TrayIcon>(this);
+    m_tray = std::make_unique<TrayIcon>(this, m_atlas.get());
     m_tray->show();
 
     // unified ~60Hz tick. v0.1 had logic at 10Hz and render at 30Hz, on
@@ -320,23 +326,69 @@ void CreechrApp::openLogFolder()
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
+namespace {
+const QString kRunKeyPath = QStringLiteral(
+    "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const QString kRunValueName = QStringLiteral("creechr");
+} // namespace
+
+bool CreechrApp::autostartEnabled() const
+{
+#ifdef _WIN32
+    QSettings run(kRunKeyPath, QSettings::NativeFormat);
+    return run.contains(kRunValueName);
+#else
+    return false;
+#endif
+}
+
+void CreechrApp::setAutostart(bool on)
+{
+#ifdef _WIN32
+    QSettings run(kRunKeyPath, QSettings::NativeFormat);
+    if (on) {
+        // quoted because Program Files has a space in it and the Run
+        // key parser is from 1995
+        run.setValue(kRunValueName,
+                     QStringLiteral("\"%1\"").arg(
+                         QDir::toNativeSeparators(applicationFilePath())));
+        LOG_INFO(QStringLiteral("autostart: enabled (%1)").arg(applicationFilePath()));
+    } else {
+        run.remove(kRunValueName);
+        LOG_INFO(QStringLiteral("autostart: disabled"));
+    }
+#else
+    Q_UNUSED(on);
+#endif
+}
+
 void CreechrApp::fireHeistNow()
 {
     LOG_INFO(QStringLiteral("tray: fireHeistNow"));
     if (!m_creechr || m_creechr->heist()) return;
-    // pick whatever's available — prefer window, then dom, then uia, then cursor
+    if (!m_settings.anyStealEnabled()) {
+        // the user asked for a heist while having every kind disabled.
+        // he has opinions about that.
+        m_creechr->speak(QStringLiteral("you disabled all my hobbies"), 2400);
+        return;
+    }
+    // pick whatever's available and allowed — prefer window, then dom,
+    // then uia, then cursor
     std::optional<cr::HeistTarget> target;
-    if (m_winTargets) target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
-    if (!target.has_value() && m_extTargets && m_extTargets->isReady())
+    if (m_settings.stealWindows && m_winTargets)
+        target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
+    if (!target.has_value() && m_settings.stealDom && m_extTargets && m_extTargets->isReady())
         target = m_extTargets->pickRandom(g_cachedWorld.virtualDesktop);
-    if (!target.has_value() && m_uiaTargets)
+    if (!target.has_value() && m_settings.stealUia && m_uiaTargets)
         target = m_uiaTargets->pickRandom(g_cachedWorld.virtualDesktop);
-    if (!target.has_value() && m_curTargets)
+    if (!target.has_value() && m_settings.stealCursor && m_curTargets)
         target = m_curTargets->current();
     if (target.has_value()) {
         LOG_INFO(QStringLiteral("tray: fire heist on %1").arg(target->label));
         m_creechr->beginHeist(*target);
         m_lastHeistAttemptMs = QDateTime::currentMSecsSinceEpoch();
+    } else {
+        m_creechr->speak(QStringLiteral("nothing worth taking right now"), 2000);
     }
 }
 
@@ -402,6 +454,8 @@ void CreechrApp::onTick()
     // cheap stuff every tick
     g_cachedWorld.cursorPos = QCursor::pos();
     g_cachedWorld.msSinceLastInput = cr::win32::millisSinceLastInput();
+    g_cachedWorld.stashWaitMinMs = m_settings.stashWaitMinMs();
+    g_cachedWorld.stashWaitRangeMs = m_settings.stashWaitRangeMs();
 
     // hide the overlay when a fullscreen game/presentation is going.
     if (m_overlay) {
@@ -416,58 +470,70 @@ void CreechrApp::onTick()
         }
     }
 
-    // heist orchestration. constants are tuned for 60Hz ticks now:
-    //   - bounded(900) at 60Hz = ~1 attempt per 15 seconds on average
-    //   - 8s hard cooldown still applies
-    //   - input-idle gate dropped from 5s to 2.5s so casual breaks count
+    // heist orchestration. gates come from settings now:
+    //   - time-based roll: bounded(meanMs) < dt gives one expected
+    //     attempt per meanMs of qualifying idle, at ANY tick rate
+    //   - input-idle gate and cooldown scale with mischief level
+    //   - calm mode (mean 0) means the whole block never fires
     // when an attempt fires the random gate but no target is found we
     // log it at info so the user can see *why* nothing visible happened.
     //
-    // dev override: CREECHR_HEIST_NOW=1 in the env removes the random
-    // gate and the input idle gate so heists fire as fast as the 8s
-    // cooldown allows. for "show me it works" runs.
+    // dev override: CREECHR_HEIST_NOW=1 removes the random and idle
+    // gates (and ignores calm mode, on the theory that if you set the
+    // env var you meant it). CREECHR_HEIST_KIND pins the target kind
+    // and beats the per-kind toggles for the same reason.
     static const bool kForceHeist = !qgetenv("CREECHR_HEIST_NOW").isEmpty();
+    static const QByteArray kKindPin = qgetenv("CREECHR_HEIST_KIND").toLower();
+    const int meanMs = m_settings.heistMeanIntervalMs();
     const qint64 sinceLastAttempt = now - m_lastHeistAttemptMs;
-    const bool inputGateOk = kForceHeist || g_cachedWorld.msSinceLastInput >= 2500;
+    const bool inputGateOk = kForceHeist
+        || g_cachedWorld.msSinceLastInput >= m_settings.inputIdleGateMs();
     const bool randomGateOk = kForceHeist
         ? (sinceLastAttempt > 2000)
-        : (QRandomGenerator::global()->bounded(900) == 0);
+        : (meanMs > 0
+           && static_cast<int>(QRandomGenerator::global()->bounded(meanMs)) < dt);
     if (m_creechr && !m_creechr->heist()
         && inputGateOk
-        && sinceLastAttempt > 2000
+        && sinceLastAttempt > m_settings.heistCooldownMs()
         && randomGateOk) {
         m_lastHeistAttemptMs = now;
-        // roll table:
-        //   0..3 (40%) -> window heist
-        //   4..5 (20%) -> uia heist
-        //   6..7 (20%) -> dom heist (only if extension is connected and has cache)
-        //   8..9 (20%) -> cursor heist
-        // any provider that comes back empty falls through to cursor.
-        //
-        // dev override: CREECHR_HEIST_KIND=window|uia|dom|cursor pins
-        // the roll so one provider can be exercised on demand. pairs
-        // with CREECHR_HEIST_NOW for "test exactly this path" runs.
-        static const QByteArray kKindPin = qgetenv("CREECHR_HEIST_KIND").toLower();
-        int roll = QRandomGenerator::global()->bounded(10);
-        if      (kKindPin == "window") roll = 0;
-        else if (kKindPin == "uia")    roll = 4;
-        else if (kKindPin == "dom")    roll = 6;
-        else if (kKindPin == "cursor") roll = 8;
+        // weighted roll table built from whatever kinds are allowed.
+        // weights preserve the old 40/20/20/20 window-heavy split,
+        // minus anything the user toggled off. empty table = the user
+        // said no to everything, which calm mode also covers, but hey.
+        char pick = 0;
+        if      (kKindPin == "window") pick = 'w';
+        else if (kKindPin == "uia")    pick = 'u';
+        else if (kKindPin == "dom")    pick = 'd';
+        else if (kKindPin == "cursor") pick = 'c';
+        if (pick == 0) {
+            QVarLengthArray<char, 10> table;
+            if (m_settings.stealWindows) { table.append('w'); table.append('w'); table.append('w'); table.append('w'); }
+            if (m_settings.stealUia)     { table.append('u'); table.append('u'); }
+            if (m_settings.stealDom && m_extTargets && m_extTargets->isReady()) { table.append('d'); table.append('d'); }
+            if (m_settings.stealCursor)  { table.append('c'); table.append('c'); }
+            if (!table.isEmpty()) {
+                pick = table[QRandomGenerator::global()->bounded(table.size())];
+            }
+        }
         std::optional<cr::HeistTarget> target;
-        const char* whichRoll = "?";
-        if (roll < 4 && m_winTargets) {
+        const char* whichRoll = "nothing enabled";
+        if (pick == 'w' && m_winTargets) {
             whichRoll = "window";
             target = m_winTargets->pickRandom(g_cachedWorld.virtualDesktop);
-        } else if (roll < 6 && m_uiaTargets) {
+        } else if (pick == 'u' && m_uiaTargets) {
             whichRoll = "uia";
             target = m_uiaTargets->pickRandom(g_cachedWorld.virtualDesktop);
-        } else if (roll < 8 && m_extTargets && m_extTargets->isReady()) {
+        } else if (pick == 'd' && m_extTargets && m_extTargets->isReady()) {
             whichRoll = "dom";
             target = m_extTargets->pickRandom(g_cachedWorld.virtualDesktop);
-        } else {
+        } else if (pick == 'c') {
             whichRoll = "cursor";
         }
-        if (!target.has_value() && m_curTargets) {
+        // empty-handed providers fall through to cursor, but only if
+        // cursor theft is actually allowed (or pinned)
+        if (!target.has_value() && m_curTargets
+            && (m_settings.stealCursor || kKindPin == "cursor") && pick != 0) {
             target = m_curTargets->current();
         }
         if (target.has_value()) {

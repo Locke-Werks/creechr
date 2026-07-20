@@ -4,6 +4,8 @@
 // the heist executor, and a small pile of regrets.
 #pragma once
 
+#include "app/settings.h"
+
 #include <QApplication>
 #include <QHash>
 #include <QString>
@@ -40,6 +42,22 @@ public:
     // global pause toggle. nothing actually responds to this yet but the
     // tray menu wires into it so future code can hook the signal.
     bool isPaused() const { return m_paused; }
+
+    // live settings. the tray mutates fields directly and calls
+    // saveSettings(); everything reads them fresh each tick, so
+    // changes apply without ceremony.
+    cr::Settings& settings() { return m_settings; }
+    void saveSettings() { m_settings.save(); }
+
+    // start-with-windows via the HKCU Run key. the registry is the
+    // truth here, not the ini: the checkbox reflects whats actually
+    // going to happen at logon.
+    bool autostartEnabled() const;
+    void setAutostart(bool on);
+
+    // whether the extension pipe server came up (the browser toggle
+    // greys out when it didnt)
+    bool extensionPipeOk() const { return m_extPipeOk; }
 
 public slots:
     void setPaused(bool paused);
@@ -82,4 +100,6 @@ private:
     qint64 m_lastTickMs = 0;
     qint64 m_lastWorldRefreshMs = 0;
     bool m_paused = false;
+    bool m_extPipeOk = false;
+    cr::Settings m_settings;
 };

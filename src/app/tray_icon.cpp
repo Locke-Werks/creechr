@@ -74,6 +74,16 @@ TrayIcon::TrayIcon(CreechrApp* app, const cr::SpriteAtlas* atlas)
         m_app->saveSettings();
     });
 
+    // ghost mode: the overlay never goes interactive, he cannot be
+    // clicked or grabbed. for people who want a screensaver, not a pet.
+    QAction* ghost = m_menu->addAction(QStringLiteral("ghost mode (cant touch him)"));
+    ghost->setCheckable(true);
+    ghost->setChecked(m_app->settings().ghostMode);
+    connect(ghost, &QAction::toggled, this, [this](bool on) {
+        m_app->settings().ghostMode = on;
+        m_app->saveSettings();
+    });
+
     m_menu->addSeparator();
     m_fireHeistAction = m_menu->addAction(QStringLiteral("fire a heist now"));
     m_releaseAction = m_menu->addAction(QStringLiteral("release everything he's stolen"));

@@ -176,6 +176,20 @@ void CreechrApp::start()
     m_overlay->setAtlas(m_atlas.get());
     m_overlay->show();
 
+    // mouse input over the creature. gesture disambiguation comes with
+    // the interaction controller; for now the pipeline just proves
+    // itself in the log.
+    connect(m_overlay.get(), &OverlayWindow::sigMousePressed, this,
+            [](QPointF p) {
+        LOG_DEBUG(QStringLiteral("interact: press at %1,%2")
+            .arg(p.x()).arg(p.y()));
+    });
+    connect(m_overlay.get(), &OverlayWindow::sigMouseReleased, this,
+            [](QPointF p) {
+        LOG_DEBUG(QStringLiteral("interact: release at %1,%2")
+            .arg(p.x()).arg(p.y()));
+    });
+
     m_windows = std::make_unique<cr::WindowEnumerator>();
 #ifdef _WIN32
     m_windows->setSelfHwnd(reinterpret_cast<HWND>(m_overlay->winId()));
@@ -502,6 +516,24 @@ void CreechrApp::onTick()
                 LOG_INFO(QStringLiteral("fullscreen detected, hiding overlay"));
             }
         }
+    }
+
+    // interactivity watchdog: he is clickable exactly while the cursor
+    // is on him (inflated a touch), and the whole desktop stays
+    // click-through everywhere else. asserted from FRESH data every
+    // tick — no latched state exists that could go stale and leave the
+    // desktop click-blocked; worst case is one 16ms tick of wrongness.
+    // CREECHR_NO_INTERACT=1 and the tray ghost toggle force
+    // pass-through outright.
+    static const bool kNoInteract = !qgetenv("CREECHR_NO_INTERACT").isEmpty();
+    if (m_overlay && m_creechr) {
+        const QRect hitRect = m_creechr->drawRect().adjusted(-8, -8, 8, 8);
+        const bool wantInteractive = !kNoInteract
+            && !m_settings.ghostMode
+            && !g_cachedWorld.fullscreenActive
+            && m_overlay->isVisible()
+            && hitRect.contains(g_cachedWorld.cursorPos);
+        m_overlay->setInteractive(wantInteractive);
     }
 
     // heist orchestration. gates come from settings now:

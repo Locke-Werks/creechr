@@ -44,9 +44,31 @@ public:
     // behavior if partial updates ever ghost.
     void updateScene();
 
+    // hit-test control. interactive=true clears WS_EX_TRANSPARENT so
+    // mouse input lands on this window; false restores full
+    // pass-through. reads the live ex-style first and no-ops when
+    // already correct, so the app can (and does) assert the desired
+    // state EVERY tick from fresh cursor data — that per-tick assert
+    // is the entire failsafe strategy: there is no latched state
+    // that can go stale and click-block the desktop.
+    void setInteractive(bool interactive);
+
+signals:
+    // raw input over the creature, forwarded verbatim. the overlay
+    // stays dumb; gesture logic lives with the app.
+    void sigMousePressed(QPointF globalPos);
+    void sigMouseMoved(QPointF globalPos);
+    void sigMouseReleased(QPointF globalPos);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message,
+                     qintptr* result) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private slots:
     void recomputeGeometry();

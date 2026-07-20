@@ -3,7 +3,10 @@
 #include "render/sprite_atlas.h"
 #include "util/logging.h"
 
+#include <QCursor>
 #include <QGuiApplication>
+#include <QHideEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QRect>
@@ -18,17 +21,23 @@ OverlayWindow::OverlayWindow(QWidget* parent)
     : QWidget(parent)
 {
     setWindowTitle(QStringLiteral("creechr-overlay"));
+    // note the ABSENCE of Qt::WindowTransparentForInput and
+    // WA_TransparentForMouseEvents: click-through is owned exclusively
+    // by the native WS_EX_TRANSPARENT bit (applyClickThroughFlags sets
+    // it, setInteractive toggles it). qt believes this window accepts
+    // input, which is what makes mouse events deliverable during the
+    // brief interactive windows when the cursor is on the creature.
     setWindowFlags(
         Qt::FramelessWindowHint
         | Qt::WindowStaysOnTopHint
         | Qt::Tool
-        | Qt::WindowTransparentForInput
+        | Qt::WindowDoesNotAcceptFocus
         | Qt::NoDropShadowWindowHint
     );
     setAttribute(Qt::WA_TranslucentBackground, true);
-    setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_ShowWithoutActivating, true);
+    setMouseTracking(true);
 
     // recompute when screens come and go. yes this signal can fire
     // multiple times for a single monitor change. that's fine, it's
@@ -68,6 +77,89 @@ void OverlayWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     applyClickThroughFlags();
+}
+
+void OverlayWindow::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    // visibility churn resets to the resting state: fully click-through
+    applyClickThroughFlags();
+}
+
+void OverlayWindow::setInteractive(bool interactive)
+{
+#ifdef _WIN32
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    if (!hwnd) return;
+    const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    const bool transparentNow = (ex & WS_EX_TRANSPARENT) != 0;
+    if (transparentNow != interactive) {
+        return; // already in the requested state, 60Hz-free
+    }
+    LONG_PTR next = ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    if (interactive) {
+        next &= ~WS_EX_TRANSPARENT;
+    } else {
+        next |= WS_EX_TRANSPARENT;
+    }
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER
+                 | SWP_FRAMECHANGED);
+    LOG_DEBUG(interactive ? QStringLiteral("overlay: interactive ON")
+                          : QStringLiteral("overlay: interactive OFF"));
+#else
+    Q_UNUSED(interactive);
+#endif
+}
+
+bool OverlayWindow::nativeEvent(const QByteArray& eventType, void* message,
+                                qintptr* result)
+{
+#ifdef _WIN32
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")) {
+        MSG* msg = static_cast<MSG*>(message);
+        if (msg->message == WM_NCHITTEST) {
+            // secondary filter. windows only asks a window without
+            // WS_EX_TRANSPARENT, i.e. during the interactive moments,
+            // and only ever about the cursor location — so comparing
+            // QCursor::pos() (logical) against logical rects sidesteps
+            // the physical-coords-in-lParam mixed-dpi trap entirely.
+            // HTTRANSPARENT here cannot rescue a misrouted click (the
+            // OS routed it before asking), but it keeps qt from
+            // synthesizing events for far-away points if a logic bug
+            // ever leaves the interactive bit stuck cleared.
+            if (m_creechr) {
+                const QRect hit = m_creechr->drawRect().adjusted(-8, -8, 8, 8);
+                if (hit.contains(QCursor::pos())) {
+                    *result = HTCLIENT;
+                    return true;
+                }
+            }
+            *result = HTTRANSPARENT;
+            return true;
+        }
+    }
+#endif
+    return QWidget::nativeEvent(eventType, message, result);
+}
+
+void OverlayWindow::mousePressEvent(QMouseEvent* event)
+{
+    emit sigMousePressed(event->globalPosition());
+    event->accept();
+}
+
+void OverlayWindow::mouseMoveEvent(QMouseEvent* event)
+{
+    emit sigMouseMoved(event->globalPosition());
+    event->accept();
+}
+
+void OverlayWindow::mouseReleaseEvent(QMouseEvent* event)
+{
+    emit sigMouseReleased(event->globalPosition());
+    event->accept();
 }
 
 void OverlayWindow::applyClickThroughFlags()

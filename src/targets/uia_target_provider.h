@@ -1,19 +1,17 @@
 // UiaTargetProvider — walks the UIA tree of the current foreground
-// window looking for buttons / hyperlinks / images / menu items, and
-// hands them out as HeistTargets.
+// window (and the taskbar) looking for buttons / hyperlinks / images /
+// menu items, and hands them out as HeistTargets.
 //
-// SPEC DEVIATION (§6.1): the spec says "UIA on its own COM-init worker
-// thread, never touch raw UIA pointers from the render thread". v0.3
-// runs UIA on the MAIN thread because for the demo targets (notepad's
-// menu bar, simple chrome elements) the cost is small and the threading
-// scaffolding wasn't worth the code. if you start seeing main-thread
-// stutter when UIA scans run, this is the first thing to refactor.
-// COM init still happens once via CoInitializeEx at construct time.
+// UIA lives on its OWN worker thread with its own MTA COM init, the
+// way the spec always said it should (the v0.3 main-thread shortcut
+// finally paid its stutter bill and got evicted). the main thread
+// only ever touches by-value snapshots under a mutex; no raw UIA
+// pointer crosses the boundary.
 //
-// the snapshot returned is by-value and contains no live UIA pointers,
-// so it's safe to consume from anywhere even though it was created on
-// the main thread. when we move UIA off-thread for real, that interface
-// stays the same.
+// pickRandom never blocks: it serves from the last snapshot when
+// fresh (<15s) and kicks the worker for a new one either way. a cold
+// snapshot returns nullopt, the orchestrator falls through to a
+// cursor heist, and the SECOND uia roll hits warm data.
 #pragma once
 
 #include "targets/target_provider.h"
@@ -21,7 +19,10 @@
 #include <QRect>
 #include <QString>
 #include <QVector>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
+#include <thread>
 
 namespace cr {
 
@@ -37,26 +38,30 @@ public:
     UiaTargetProvider();
     ~UiaTargetProvider();
 
-    // run a fresh scan of the current foreground window's UIA tree.
-    // returns the (possibly empty) list of stealable items. cheap if
-    // the foreground hasn't changed since last call (we cache).
-    QVector<UiaSnapshotItem> scan(const QRect& virtualDesktop);
+    // wake the worker for a fresh scan. returns immediately.
+    void requestScan(const QRect& virtualDesktop);
 
-    // pick a random one and return it as a HeistTarget. nullopt if
-    // there's nothing in the foreground worth stealing.
+    // pick a random element from the freshest snapshot, or nullopt if
+    // the snapshot is cold/empty. always kicks a refresh so repeated
+    // interest keeps the data warm.
     std::optional<HeistTarget> pickRandom(const QRect& virtualDesktop);
 
 private:
-    // private — declared as void* in the header to avoid pulling in
-    // UIAutomation.h. cpp side casts to the real types. sourceHwnd is
-    // the hwnd the root element came from, used for per-monitor dpi.
+    void workerMain();
+    // worker-side only. void* so this header stays UIAutomation.h-free.
+    QVector<UiaSnapshotItem> runScan(void* automation, const QRect& virtualDesktop);
     void scanFromRoot(void* root, void* cond, void* sourceHwnd,
                       const QRect& virtualDesktop,
                       QVector<UiaSnapshotItem>& out);
 
-    bool m_comInitialized = false;
-    void* m_automation = nullptr;     // IUIAutomation*, void* to keep this header clean
-    QVector<UiaSnapshotItem> m_lastSnapshot;
+    std::thread m_worker;
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_scanRequested = false;
+    bool m_quit = false;
+    QRect m_pendingVd;
+    QVector<UiaSnapshotItem> m_snapshot;
+    qint64 m_snapshotMs = 0;
 };
 
 } // namespace cr

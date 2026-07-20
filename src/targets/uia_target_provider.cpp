@@ -1,6 +1,7 @@
 #include "targets/uia_target_provider.h"
 #include "util/logging.h"
 
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QRandomGenerator>
 #include <QScreen>
@@ -15,43 +16,62 @@
 
 namespace cr {
 
-#ifdef _WIN32
-
 UiaTargetProvider::UiaTargetProvider()
 {
-    // COINIT_APARTMENTTHREADED — UIA wants STA. caller (main thread) is
-    // already STA via Qt's QGuiApplication, so this is fine.
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE) {
-        m_comInitialized = (hr == S_OK || hr == S_FALSE);
-    } else {
-        LOG_WARN(QStringLiteral("UIA: CoInitializeEx failed (hr=0x%1)")
-            .arg(static_cast<quint32>(hr), 8, 16, QLatin1Char('0')));
-        return;
-    }
-
-    IUIAutomation* automation = nullptr;
-    hr = CoCreateInstance(__uuidof(CUIAutomation), nullptr,
-                          CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation),
-                          reinterpret_cast<void**>(&automation));
-    if (FAILED(hr) || !automation) {
-        LOG_WARN(QStringLiteral("UIA: CoCreateInstance(CUIAutomation) failed"));
-        return;
-    }
-    m_automation = automation;
-    LOG_INFO(QStringLiteral("UIA: provider ready"));
+#ifdef _WIN32
+    m_worker = std::thread([this] { workerMain(); });
+#endif
 }
 
 UiaTargetProvider::~UiaTargetProvider()
 {
-    if (m_automation) {
-        static_cast<IUIAutomation*>(m_automation)->Release();
-        m_automation = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_quit = true;
     }
-    if (m_comInitialized) {
-        CoUninitialize();
+    m_cv.notify_one();
+    if (m_worker.joinable()) {
+        m_worker.join();
     }
 }
+
+void UiaTargetProvider::requestScan(const QRect& virtualDesktop)
+{
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_pendingVd = virtualDesktop;
+        m_scanRequested = true;
+    }
+    m_cv.notify_one();
+}
+
+std::optional<HeistTarget> UiaTargetProvider::pickRandom(const QRect& virtualDesktop)
+{
+    QVector<UiaSnapshotItem> items;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (m_snapshotMs != 0 && now - m_snapshotMs < 15000) {
+            items = m_snapshot;
+        }
+    }
+    // keep it warm either way: interest now predicts interest soon
+    requestScan(virtualDesktop);
+
+    if (items.isEmpty()) {
+        LOG_INFO(QStringLiteral("uia: snapshot cold, warming for next time"));
+        return std::nullopt;
+    }
+    const int idx = QRandomGenerator::global()->bounded(items.size());
+    HeistTarget t;
+    t.kind = TargetKind::UiaElement;
+    t.screenRect = items[idx].screenRect;
+    t.hwnd = nullptr; // we don't track the source hwnd as a heist field
+    t.label = items[idx].controlType + QStringLiteral(":") + items[idx].name;
+    return t;
+}
+
+#ifdef _WIN32
 
 namespace {
 
@@ -74,6 +94,50 @@ QString controlTypeName(int id)
 }
 
 } // namespace
+
+void UiaTargetProvider::workerMain()
+{
+    // MTA on purpose: this thread has no message pump, and a pumpless
+    // STA deadlocks the first cross-process UIA call. MTA is the
+    // documented mode for exactly this shape of client.
+    const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(hrInit)) {
+        LOG_WARN(QStringLiteral("UIA worker: CoInitializeEx failed (hr=0x%1)")
+            .arg(static_cast<quint32>(hrInit), 8, 16, QLatin1Char('0')));
+        return;
+    }
+
+    IUIAutomation* automation = nullptr;
+    const HRESULT hr = CoCreateInstance(__uuidof(CUIAutomation), nullptr,
+                                        CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation),
+                                        reinterpret_cast<void**>(&automation));
+    if (FAILED(hr) || !automation) {
+        LOG_WARN(QStringLiteral("UIA worker: CoCreateInstance(CUIAutomation) failed"));
+        CoUninitialize();
+        return;
+    }
+    LOG_INFO(QStringLiteral("UIA: provider ready (worker thread)"));
+
+    for (;;) {
+        QRect vd;
+        {
+            std::unique_lock<std::mutex> lk(m_mutex);
+            m_cv.wait(lk, [this] { return m_scanRequested || m_quit; });
+            if (m_quit) break;
+            m_scanRequested = false;
+            vd = m_pendingVd;
+        }
+        QVector<UiaSnapshotItem> out = runScan(automation, vd);
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_snapshot = std::move(out);
+            m_snapshotMs = QDateTime::currentMSecsSinceEpoch();
+        }
+    }
+
+    automation->Release();
+    CoUninitialize();
+}
 
 void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr, void* sourceHwndPtr,
                                       const QRect& virtualDesktop,
@@ -143,12 +207,12 @@ void UiaTargetProvider::scanFromRoot(void* rootPtr, void* condPtr, void* sourceH
     found->Release();
 }
 
-QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
+QVector<UiaSnapshotItem> UiaTargetProvider::runScan(void* automationPtr,
+                                                    const QRect& virtualDesktop)
 {
     QVector<UiaSnapshotItem> out;
-    if (!m_automation) return out;
-
-    auto* automation = static_cast<IUIAutomation*>(m_automation);
+    auto* automation = static_cast<IUIAutomation*>(automationPtr);
+    if (!automation) return out;
 
     // build the OR-of-control-types AND not-offscreen condition once,
     // reuse it for both the foreground-window scan and the taskbar scan
@@ -232,30 +296,14 @@ QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect& virtualDesktop)
     }
 
     finalCond->Release();
-
-    m_lastSnapshot = out;
     return out;
-}
-
-std::optional<HeistTarget> UiaTargetProvider::pickRandom(const QRect& virtualDesktop)
-{
-    auto items = scan(virtualDesktop);
-    if (items.isEmpty()) return std::nullopt;
-    const int idx = QRandomGenerator::global()->bounded(items.size());
-    HeistTarget t;
-    t.kind = TargetKind::UiaElement;
-    t.screenRect = items[idx].screenRect;
-    t.hwnd = nullptr; // we don't track the source hwnd as a heist field
-    t.label = items[idx].controlType + QStringLiteral(":") + items[idx].name;
-    return t;
 }
 
 #else // !_WIN32
 
-UiaTargetProvider::UiaTargetProvider()  = default;
-UiaTargetProvider::~UiaTargetProvider() = default;
-QVector<UiaSnapshotItem> UiaTargetProvider::scan(const QRect&)            { return {}; }
-std::optional<HeistTarget> UiaTargetProvider::pickRandom(const QRect&)    { return {}; }
+void UiaTargetProvider::workerMain() {}
+QVector<UiaSnapshotItem> UiaTargetProvider::runScan(void*, const QRect&) { return {}; }
+void UiaTargetProvider::scanFromRoot(void*, void*, void*, const QRect&, QVector<UiaSnapshotItem>&) {}
 
 #endif
 

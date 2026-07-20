@@ -245,6 +245,14 @@ void CreechrApp::setPaused(bool paused)
 void CreechrApp::quitGracefully()
 {
     LOG_INFO(QStringLiteral("CreechrApp::quitGracefully"));
+    if (m_creechr) {
+        // hand back whatever he's holding, including the nasty case
+        // of a window hidden mid-carry that isnt in the hoard yet.
+        // this also settles cursor custody, which kicks off the
+        // reel-home glide; no ticks are coming, so play it out here.
+        m_creechr->giveBackLootNow();
+        m_creechr->finishCursorGlideNow();
+    }
     if (m_hoard) {
         m_hoard->restoreAll(); // critical: never leave a window hidden
     }
@@ -254,9 +262,13 @@ void CreechrApp::quitGracefully()
 void CreechrApp::releaseEverything()
 {
     LOG_INFO(QStringLiteral("tray: releaseEverything"));
+    if (m_creechr) {
+        // giveBackLootNow first: it covers the mid-carry window that
+        // has no hoard entry yet. restoreAll then sweeps the rest.
+        m_creechr->giveBackLootNow();
+    }
     if (m_hoard) m_hoard->restoreAll();
     if (m_creechr) {
-        m_creechr->clearHeist();
         m_creechr->speak(QStringLiteral("fine, take it"), 1500);
     }
 }
@@ -391,7 +403,16 @@ void CreechrApp::onTick()
         //   6..7 (20%) -> dom heist (only if extension is connected and has cache)
         //   8..9 (20%) -> cursor heist
         // any provider that comes back empty falls through to cursor.
-        const int roll = QRandomGenerator::global()->bounded(10);
+        //
+        // dev override: CREECHR_HEIST_KIND=window|uia|dom|cursor pins
+        // the roll so one provider can be exercised on demand. pairs
+        // with CREECHR_HEIST_NOW for "test exactly this path" runs.
+        static const QByteArray kKindPin = qgetenv("CREECHR_HEIST_KIND").toLower();
+        int roll = QRandomGenerator::global()->bounded(10);
+        if      (kKindPin == "window") roll = 0;
+        else if (kKindPin == "uia")    roll = 4;
+        else if (kKindPin == "dom")    roll = 6;
+        else if (kKindPin == "cursor") roll = 8;
         std::optional<cr::HeistTarget> target;
         const char* whichRoll = "?";
         if (roll < 4 && m_winTargets) {

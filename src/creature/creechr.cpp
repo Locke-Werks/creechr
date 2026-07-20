@@ -15,6 +15,7 @@
 #include <QRect>
 #include <QScreen>
 #include <QtGlobal>
+#include <cmath>
 #include <memory>
 
 #ifdef _WIN32
@@ -1132,15 +1133,20 @@ public:
         // velocity was set by whoever flung him. set animation to hang
         // (arms up) which reads as flailing.
         c.animator().setAnimation(QStringLiteral("hang"));
-        c.speakRandom({
-            QStringLiteral("OW"),
-            QStringLiteral("DICK"),
-            QStringLiteral("aaaa"),
-            QStringLiteral("fuck"),
-            QStringLiteral("HEY"),
-            QStringLiteral("rude"),
-            QStringLiteral("WHY"),
-        }, 2200);
+        // whoever launched him may have pre-set a better line (the
+        // pounce's "RAH", the caught-red-handed excuse). only whine
+        // generically if nobody had anything to say.
+        if (c.currentSpeech().isEmpty()) {
+            c.speakRandom({
+                QStringLiteral("OW"),
+                QStringLiteral("DICK"),
+                QStringLiteral("aaaa"),
+                QStringLiteral("fuck"),
+                QStringLiteral("HEY"),
+                QStringLiteral("rude"),
+                QStringLiteral("WHY"),
+            }, 2200);
+        }
         m_settledFrames = 0;
     }
 
@@ -1250,6 +1256,17 @@ public:
             QStringLiteral("sneaky time"),
         }, 1700);
         const QRect& f = c.heist()->target.screenRect;
+        if (c.heist()->target.kind == TargetKind::Cursor) {
+            // cursor heists dont walk anywhere. the whole bit is that
+            // he plants his feet, fires the grappling hook, and the
+            // POINTER comes to HIM. HeistGrab owns the reel.
+            m_grappleInstead = true;
+            c.setVelocity({ 0, 0 });
+            c.setFacingRight(f.center().x() > c.position().x());
+            c.animator().setAnimation(QStringLiteral("idle"));
+            return;
+        }
+        m_grappleInstead = false;
         const int targetX = nearerEdge(static_cast<int>(c.position().x()),
                                        f.left() - 4, f.right() + 4);
         const bool right = targetX > c.position().x();
@@ -1269,6 +1286,9 @@ public:
             c.clearHeist();
             return QStringLiteral("idle");
         }
+        if (m_grappleInstead) {
+            return QStringLiteral("heist_grab");
+        }
         QPointF pos = c.position() + c.velocity() * (deltaMs / 1000.0);
         c.setPosition(pos);
         if (qAbs(static_cast<int>(pos.x()) - m_targetX) <= 4) {
@@ -1280,6 +1300,7 @@ public:
 private:
     int m_elapsedMs = 0;
     int m_targetX = 0;
+    bool m_grappleInstead = false;
 };
 
 // HeistGrab is now animation-driven so the bite is actually visible.
@@ -1295,8 +1316,14 @@ public:
 
     void enter(Creechr& c, const WorldContext&) override
     {
+        // state objects live forever, so EVERY counter gets reset here
+        // or the second heist inherits the first one's leftovers
         m_capturedOk = false;
         m_phase = Phase::Grabbing;
+        m_reelHauling = false;
+        m_reelMs = 0;
+        m_biteMsLeft = 0;
+        m_domAckWaitMs = 0;
         c.setVelocity({ 0, 0 });
         c.animator().setAnimation(QStringLiteral("grab"), /*reset*/true);
         c.speakRandom({
@@ -1377,6 +1404,17 @@ public:
         } else if (h->target.kind == TargetKind::Cursor) {
             h->originalFrame = h->target.screenRect;
             m_capturedOk = true;
+            // grapple time. grab anim doubles as the hook toss, then
+            // the Reeling phase hauls the pointer down the line into
+            // his hands. no walking, no teleporting: the rope renders
+            // off the rappel anchor, which we pin to the cursor and
+            // drag inward every tick.
+            m_phase = Phase::Reeling;
+            m_reelHauling = false;
+            m_reelMs = 0;
+            const QPoint cur = QCursor::pos();
+            c.setFacingRight(cur.x() > c.position().x());
+            c.setRappelAnchor(cur.x(), cur.y());
         }
     }
 
@@ -1389,6 +1427,67 @@ public:
             // capture failed in enter() — abort cleanly
             c.clearHeist();
             return QStringLiteral("idle");
+        }
+
+        if (m_phase == Phase::Reeling) {
+            // real user input kills the bit instantly. our own
+            // SetCursorPos calls dont count as input, so anything
+            // fresh here is an actual hand on an actual mouse.
+            if (world.msSinceLastInput < heist_helpers::kHeistInputAbortMs
+                || cr::win32::anyMouseButtonDown()) {
+                LOG_INFO(QStringLiteral("heist: user moved during cursor reel, dropping the line"));
+                c.clearRappelAnchor();
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
+            m_reelMs += deltaMs;
+            if (m_reelMs > 5000) {
+                // hook is stuck on something. cut the line, go home.
+                LOG_WARN(QStringLiteral("heist: cursor reel timed out"));
+                c.clearRappelAnchor();
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
+            // let the hook-toss anim land before hauling
+            if (!c.animator().finished() && !m_reelHauling) {
+                return {};
+            }
+            if (!m_reelHauling) {
+                m_reelHauling = true;
+                // hand-over-hand. climb frames read as hauling a line
+                // when he's standing still.
+                c.animator().setAnimation(QStringLiteral("climb_up"));
+                c.takeCursorCustody(h->originalFrame.center());
+            }
+#ifdef _WIN32
+            const QPointF hand(c.position().x() + 24.0, c.position().y() + 2.0);
+            const QPoint curNow = QCursor::pos();
+            const QPointF delta = hand - QPointF(curNow);
+            const double dist = std::hypot(delta.x(), delta.y());
+            if (dist <= 22.0) {
+                // pointer in hand. chomp, then off to the corner.
+                c.clearRappelAnchor();
+                h->grabbed = true;
+                c.animator().setAnimation(QStringLiteral("bite"), /*reset*/true);
+                c.spawnPuff(QPointF(c.carryAnchorScreen()), 5, QColor(220, 50, 140, 230), 400);
+                m_phase = Phase::Biting;
+                m_biteMsLeft = 480;
+                return {};
+            }
+            const double step = qMin(dist, 1100.0 * (deltaMs / 1000.0));
+            const QPointF next = QPointF(curNow) + delta * (step / dist);
+            QScreen* primary = QGuiApplication::primaryScreen();
+            const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+            SetCursorPos(static_cast<int>(next.x() * dpr),
+                         static_cast<int>(next.y() * dpr));
+            // rope follows the pointer: the hook is ON the cursor
+            c.setRappelAnchor(static_cast<int>(next.x()),
+                              static_cast<int>(next.y()));
+#else
+            m_phase = Phase::Biting;
+            m_biteMsLeft = 480;
+#endif
+            return {};
         }
 
         if (m_phase == Phase::Grabbing) {
@@ -1449,9 +1548,11 @@ public:
     }
 
 private:
-    enum class Phase { Grabbing, Biting };
+    enum class Phase { Grabbing, Reeling, Biting };
     Phase m_phase = Phase::Grabbing;
     bool m_capturedOk = false;
+    bool m_reelHauling = false;
+    int m_reelMs = 0;
     int m_biteMsLeft = 0;
     int m_domAckWaitMs = 0;
 };
@@ -1483,6 +1584,13 @@ public:
         if (m_elapsedMs > heist_helpers::kHeistMaxNonStashMs ||
             world.msSinceLastInput < heist_helpers::kHeistInputAbortMs) {
             LOG_INFO(QStringLiteral("heist: carry aborted, returning early"));
+            if (h->target.kind == TargetKind::Cursor) {
+                // no walk-back for the pointer: clearHeist starts the
+                // reel-home glide, and him strolling to the old cursor
+                // spot dragging nothing looked like a bug
+                c.clearHeist();
+                return QStringLiteral("idle");
+            }
             return QStringLiteral("heist_return");
         }
 
@@ -1497,8 +1605,13 @@ public:
         if (h->target.kind == TargetKind::Cursor) {
             if (cr::win32::anyMouseButtonDown()) {
                 LOG_INFO(QStringLiteral("heist: mouse button down mid-cursor-carry, releasing"));
-                return QStringLiteral("heist_return");
+                c.clearHeist();
+                return QStringLiteral("idle");
             }
+            // from the first SetCursorPos onward we owe the user their
+            // pointer back. custody is settled in clearHeist() so every
+            // exit path pays the debt, not just the polite ones.
+            c.takeCursorCustody(h->originalFrame.center());
 #ifdef _WIN32
             // SetCursorPos takes PHYSICAL pixels when the process is
             // dpi aware (we are, per-monitor v2). creechr's position
@@ -1632,12 +1745,43 @@ public:
         m_inBehavior = false;
     }
 
-    QString tick(int deltaMs, Creechr& c, const WorldContext&) override
+    QString tick(int deltaMs, Creechr& c, const WorldContext& world) override
     {
         HeistContext* h = c.heist();
         if (!h) return QStringLiteral("idle");
+
+        // the user came back. their window is currently HIDDEN and
+        // every second it stays hidden reads as "this app broke my
+        // desktop", not "haha funny gremlin". restore it on the spot,
+        // act natural, get out of there. no trophy: he got caught.
+        if (world.msSinceLastInput < heist_helpers::kHeistInputAbortMs) {
+            LOG_INFO(QStringLiteral("heist: caught red-handed, restoring %1")
+                .arg(h->target.label));
+            if (auto* hoard = c.hoard(); hoard && !h->hoardId.isEmpty()) {
+                hoard->restoreById(h->hoardId);
+            }
+            // puff where the loot was sitting so the vanish doesnt
+            // read as a glitch
+            c.spawnPuff(QPointF(h->stashedAt) + QPointF(24.0, 24.0),
+                        6, QColor(255, 255, 255, 200), 500);
+            c.speakRandom({
+                QStringLiteral("you saw nothing"),
+                QStringLiteral("it fell"),
+                QStringLiteral("i found it like this"),
+                QStringLiteral("was gonna give it back"),
+                QStringLiteral("this isnt what it looks like"),
+                QStringLiteral("we dont need to talk about this"),
+            }, 2000);
+            // startle hop away from the cursor, then flung handles the
+            // landing. velocity picked to read as "jumped out of skin".
+            const bool cursorIsRight = world.cursorPos.x() > c.position().x();
+            c.setVelocity({ cursorIsRight ? -260.0 : 260.0, -220.0 });
+            c.clearHeist();
+            return QStringLiteral("flung");
+        }
+
         if (QDateTime::currentMSecsSinceEpoch() >= h->returnAtMs) {
-            // bored now — toss it and let it sink into the void
+            // bored now, toss it and let it sink into the void
             return QStringLiteral("heist_toss");
         }
 
@@ -1790,16 +1934,9 @@ public:
                 hoard->restoreById(h->hoardId);
             }
             c.addTrophy(h->carriedPixmap, world.virtualDesktop);
-#ifdef _WIN32
-            if (h->target.kind == TargetKind::Cursor) {
-                // same logical->physical conversion as HeistCarry
-                const QPoint center = h->originalFrame.center();
-                QScreen* primary = QGuiApplication::primaryScreen();
-                const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
-                SetCursorPos(static_cast<int>(center.x() * dpr),
-                             static_cast<int>(center.y() * dpr));
-            }
-#endif
+            // cursor return happens inside clearHeist via cursor
+            // custody. used to be a SetCursorPos here, which meant the
+            // OTHER heist end paths never gave the pointer back.
             c.clearHeist();
             return QStringLiteral("idle");
         }
@@ -2117,7 +2254,130 @@ void Creechr::beginHeist(HeistTarget t)
 
 void Creechr::clearHeist()
 {
+    // settle the cursor debt first so no exit path can forget it
+    returnCursorIfHeld();
     m_heist.reset();
+}
+
+void Creechr::giveBackLootNow()
+{
+    if (!m_heist) {
+        // nothing in hand, but custody may still be owed (paranoia)
+        returnCursorIfHeld();
+        return;
+    }
+    HeistContext& h = *m_heist;
+    if (h.grabbed) {
+        if (!h.hoardId.isEmpty()) {
+            // stashed: the hoard owns the restore, fire it
+            if (m_hoard) m_hoard->restoreById(h.hoardId);
+        } else {
+            // carry phase: source is hidden but no hoard entry exists
+            // yet. put it back by hand, same moves as the restore
+            // lambda that stash WOULD have registered.
+#ifdef _WIN32
+            if (h.target.kind == TargetKind::Window) {
+                HWND hwnd = static_cast<HWND>(h.target.hwnd);
+                if (hwnd && IsWindow(hwnd)) {
+                    SetWindowPos(hwnd, HWND_TOP,
+                                 h.originalFrame.left(), h.originalFrame.top(),
+                                 h.originalFrame.width(), h.originalFrame.height(),
+                                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    LOG_INFO(QStringLiteral("giveBackLootNow: un-hid %1 mid-carry")
+                        .arg(h.target.label));
+                }
+            }
+#endif
+            if (h.target.kind == TargetKind::DomElement && m_ext
+                && !h.target.opaqueId.isEmpty()) {
+                m_ext->requestRestore(h.target.opaqueId);
+            }
+        }
+    }
+    clearHeist();
+}
+
+void Creechr::takeCursorCustody(QPoint homeLogical)
+{
+    m_cursorCustody = true;
+    m_cursorHome = homeLogical;
+    // taking custody cancels any in-flight return: the pointer is his
+    // again, no point finishing the previous reel
+    m_cursorGlide.active = false;
+}
+
+void Creechr::returnCursorIfHeld()
+{
+    if (!m_cursorCustody) return;
+    m_cursorCustody = false;
+#ifdef _WIN32
+    // if the user is driving the mouse right now (fresh input or a
+    // button held), do NOT move the pointer at all. they have already
+    // reclaimed it wherever it is; yanking it would fight them.
+    // custody just dissolves.
+    if (cr::win32::millisSinceLastInput() < 250 || cr::win32::anyMouseButtonDown()) {
+        LOG_INFO(QStringLiteral("cursor custody: user is driving, leaving pointer be"));
+        return;
+    }
+    // reel it home instead of teleporting it. duration scales with
+    // distance so short returns feel snappy and a cross-monitor haul
+    // doesnt look like the pointer got possessed. the actual movement
+    // happens in tickCursorGlide.
+    const QPoint cur = QCursor::pos();
+    const double dist = std::hypot(double(m_cursorHome.x() - cur.x()),
+                                   double(m_cursorHome.y() - cur.y()));
+    m_cursorGlide.active = true;
+    m_cursorGlide.from = QPointF(cur);
+    m_cursorGlide.to = QPointF(m_cursorHome);
+    m_cursorGlide.elapsedMs = 0;
+    m_cursorGlide.durationMs = qBound(220, static_cast<int>(dist / 1.6), 800);
+    LOG_INFO(QStringLiteral("cursor custody: reeling pointer home to %1,%2 over %3ms")
+        .arg(m_cursorHome.x()).arg(m_cursorHome.y()).arg(m_cursorGlide.durationMs));
+#endif
+}
+
+void Creechr::tickCursorGlide(int deltaMs)
+{
+    if (!m_cursorGlide.active) return;
+#ifdef _WIN32
+    // the user grabbing the mouse mid-reel wins instantly. our own
+    // SetCursorPos calls do not count as input, so anything fresh
+    // here is a real hand on a real mouse.
+    if (cr::win32::millisSinceLastInput() < 200 || cr::win32::anyMouseButtonDown()) {
+        m_cursorGlide.active = false;
+        return;
+    }
+    m_cursorGlide.elapsedMs += deltaMs;
+    double t = static_cast<double>(m_cursorGlide.elapsedMs)
+             / static_cast<double>(qMax(1, m_cursorGlide.durationMs));
+    if (t > 1.0) t = 1.0;
+    // ease-out: fast yank off the line, gentle landing
+    const double e = 1.0 - (1.0 - t) * (1.0 - t);
+    const QPointF p = m_cursorGlide.from + (m_cursorGlide.to - m_cursorGlide.from) * e;
+    QScreen* primary = QGuiApplication::primaryScreen();
+    const qreal dpr = primary ? primary->devicePixelRatio() : 1.0;
+    SetCursorPos(static_cast<int>(p.x() * dpr),
+                 static_cast<int>(p.y() * dpr));
+    if (t >= 1.0) m_cursorGlide.active = false;
+#else
+    m_cursorGlide.active = false;
+#endif
+}
+
+void Creechr::finishCursorGlideNow()
+{
+    if (!m_cursorGlide.active) return;
+#ifdef _WIN32
+    // quit path: the tick loop is done for, so play the rest of the
+    // reel here. double speed because nobody wants to watch a cursor
+    // animation delay their shutdown. worst case ~400ms.
+    while (m_cursorGlide.active) {
+        tickCursorGlide(16);
+        ::Sleep(8);
+    }
+#else
+    m_cursorGlide.active = false;
+#endif
 }
 
 void Creechr::initialize(const WorldContext& world)
@@ -2134,9 +2394,22 @@ void Creechr::initialize(const WorldContext& world)
 void Creechr::tickLogic(int deltaMs, const WorldContext& world)
 {
     if (world.fullscreenActive) {
-        return; // freeze during fullscreen apps. spec §4.6
+        // freeze during fullscreen apps. spec §4.6. a half-finished
+        // cursor reel dies here too: moving the pointer while a game
+        // has it is far worse than abandoning it mid-path.
+        m_cursorGlide.active = false;
+        return;
     }
     m_states.tick(deltaMs, *this, world);
+    tickCursorGlide(deltaMs);
+    // if the user is back, anything still lazily drifting toward the
+    // void gets gravity-assisted. their window restores within about a
+    // second instead of five. the leisurely sink is for an empty room.
+    if (world.msSinceLastInput < 300 && !m_sinking.isEmpty()) {
+        for (SinkingItem& s : m_sinking) {
+            s.vy = qMax(s.vy, 700.0);
+        }
+    }
     // sinking items update at logic rate so their restores fire in
     // sync with the rest of the world. purely visual until the moment
     // they pass the bottom edge and hoard->restoreById lands.

@@ -194,6 +194,14 @@ public:
     void beginHeist(HeistTarget t);
     void clearHeist();
 
+    // hand back whatever the active heist is holding RIGHT NOW, no
+    // matter where in the pipeline it is, then clear the heist. exists
+    // because of the nasty gap between grab (source already hidden)
+    // and stash (hoard entry finally created): restoreAll alone cannot
+    // see a window in that gap. used by quit, tray release, and
+    // anything that startles him into dropping the goods.
+    void giveBackLootNow();
+
     // wantsFlee: set externally (by CreechrApp's scary-admin detector)
     // when creechr should drop whatever he's doing and run away. read
     // by Idle/Walk states at the top of tick(). they pre-set velocity
@@ -201,6 +209,25 @@ public:
     bool wantsFlee() const { return m_wantsFlee; }
     void requestFlee() { m_wantsFlee = true; }
     void consumeFlee() { m_wantsFlee = false; }
+
+    // cursor custody: set the moment a cursor heist physically moves
+    // the user's pointer, cleared when we give it back. clearHeist()
+    // calls returnCursorIfHeld(), and clearHeist sits on every heist
+    // end path (abort, toss, return, releaseEverything), so the
+    // pointer cannot be stranded no matter how the heist dies. the
+    // return is skipped if the user is actively driving the mouse:
+    // snapping it out from under them is worse than leaving it.
+    void takeCursorCustody(QPoint homeLogical);
+    void returnCursorIfHeld();
+    bool hasCursorCustody() const { return m_cursorCustody; }
+
+    // cursor glide: how the pointer travels when he gives it back.
+    // a single SetCursorPos jump reads as a rendering glitch; a short
+    // eased reel-home reads as him yanking the line. ticked from
+    // tickLogic, killed the instant the user touches anything.
+    void tickCursorGlide(int deltaMs);
+    void finishCursorGlideNow(); // quit path: no ticks left, play it out
+    bool cursorGlideActive() const { return m_cursorGlide.active; }
 
 private:
     QPointF m_position { 100.0, 600.0 };
@@ -223,6 +250,17 @@ private:
     ExtensionTargetProvider* m_ext = nullptr;
     std::optional<HeistContext> m_heist;
     bool m_wantsFlee = false;
+    bool m_cursorCustody = false;
+    QPoint m_cursorHome;
+
+    struct CursorGlide {
+        bool active = false;
+        QPointF from;
+        QPointF to;
+        int elapsedMs = 0;
+        int durationMs = 0;
+    };
+    CursorGlide m_cursorGlide;
 
     Animator m_animator;
     StateMachine m_states;

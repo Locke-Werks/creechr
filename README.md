@@ -1,6 +1,17 @@
+<div align="center">
+
+<img src="assets/creechr.ico" width="96" alt="creechr">
+
 # creechr
 
-a small monster that lives on your desktop and steals things.
+**a small monster that lives on your desktop and steals things. he always puts them back.**
+
+[![license](https://img.shields.io/badge/license-MIT-d6262a?style=flat-square)](LICENSE)
+![platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Qt%206-d6262a?style=flat-square)
+
+</div>
+
+---
 
 ## what
 

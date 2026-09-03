@@ -26,7 +26,7 @@ QString logDirPath()
     const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     // AppLocalDataLocation already includes the org/app name on windows,
     // so this resolves to something like:
-    // C:\Users\vexam\AppData\Local\creechr\creechr
+    // C:\Users\<user>\AppData\Local\creechr\creechr
     return base;
 }
 
